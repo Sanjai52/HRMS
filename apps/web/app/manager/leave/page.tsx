@@ -2,8 +2,8 @@ import { AppShell } from "../../../components/app-shell";
 import { EmptyState } from "../../../components/ui";
 export default function Page() {
   return (
-    <AppShell title="Leave">
-      <EmptyState title="Coming in its phase" body="The manager/leave workflow has not been built yet. The sidebar and design tokens are ready for it." />
+    <AppShell title="Leave approvals">
+      <EmptyState title="Leave approvals" body="Pending team leave requests will appear here." />
     </AppShell>
   );
 }

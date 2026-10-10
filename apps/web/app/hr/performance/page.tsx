@@ -2,8 +2,8 @@ import { AppShell } from "../../../components/app-shell";
 import { EmptyState } from "../../../components/ui";
 export default function Page() {
   return (
-    <AppShell title="Performance">
-      <EmptyState title="Coming in its phase" body="The hr/performance workflow has not been built yet. The sidebar and design tokens are ready for it." />
+    <AppShell title="Performance reviews">
+      <EmptyState title="Performance reviews" body="Review cycles, completion and ratings will live here." />
     </AppShell>
   );
 }

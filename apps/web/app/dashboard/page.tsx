@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { ArrowRight } from "@phosphor-icons/react";
+import { ArrowRight, Users } from "@phosphor-icons/react";
 import { AppShell } from "../../components/app-shell";
 import { Card, SkeletonRows } from "../../components/ui";
 
@@ -46,61 +46,63 @@ export default function Dashboard() {
 
   return (
     <AppShell title="Good day, HR">
-      <div className="grid gap-4 sm:grid-cols-3">
-        {[
-          ["People directory", state === "ready" ? String(rows.length) : "—", "Live from the catalog"],
-          ["Attendance today", "Phase 4", "Check-in flow lands next"],
-          ["Open leave requests", "Phase 4", "Approval chain lands next"],
-        ].map(([k, v, hint]) => (
-          <Card key={k} className="p-5">
-            <p className="text-sm font-medium text-foggy">{k}</p>
-            <p className="mt-1 text-3xl font-extrabold tracking-tight text-hof">{v}</p>
-            <p className="mt-1 text-[13px] text-foggy">{hint}</p>
-          </Card>
-        ))}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Card className="flex items-center gap-4 p-5">
+          <span className="grid h-12 w-12 shrink-0 place-items-center rounded-card bg-rausch/10 text-rausch">
+            <Users size={24} weight="fill" />
+          </span>
+          <div>
+            <p className="text-sm font-medium text-foggy">People in your organization</p>
+            <p className="text-3xl font-extrabold tracking-tight text-hof">
+              {state === "ready" ? rows.length : "—"}
+            </p>
+          </div>
+        </Card>
+        <Card className="flex items-center justify-between gap-4 p-5">
+          <div>
+            <p className="font-bold text-hof">Employee directory</p>
+            <p className="mt-0.5 text-sm text-foggy">Search people, teams and roles.</p>
+          </div>
+          <Link
+            href="/hr/employees"
+            className="inline-flex h-11 shrink-0 items-center gap-1.5 rounded-full bg-hof px-5 text-sm font-semibold text-white transition hover:bg-black active:scale-[0.98]"
+          >
+            Open <ArrowRight size={16} />
+          </Link>
+        </Card>
       </div>
 
-      <div className="mt-8 flex items-center justify-between">
-        <h2 className="text-lg font-bold text-hof">Recently added people</h2>
-        <Link
-          href="/hr/employees"
-          className="inline-flex items-center gap-1 text-sm font-semibold text-hof underline-offset-4 hover:underline"
-        >
-          View directory <ArrowRight size={16} />
-        </Link>
-      </div>
-      <div className="mt-3">
-        {state === "loading" && <SkeletonRows n={4} />}
-        {state === "error" && (
-          <Card className="p-8 text-center">
-            <p className="font-semibold text-hof">You are signed out</p>
-            <p className="mt-1 text-sm text-foggy">Log in to see your workspace.</p>
-            <Link
-              href="/login"
-              className="mt-4 inline-flex h-11 items-center rounded-full bg-rausch px-6 text-sm font-semibold text-white hover:bg-rausch-dark"
-            >
-              Go to login
-            </Link>
-          </Card>
-        )}
-        {state === "ready" && (
-          <Card className="divide-y divide-line-soft">
-            {rows.map((r) => (
-              <div key={r.employee_id} className="flex items-center gap-3 px-5 py-3.5">
-                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-hof text-sm font-bold text-white">
-                  {initials(r.name)}
-                </span>
-                <div className="min-w-0">
-                  <p className="truncate text-[15px] font-semibold text-hof">{r.name}</p>
-                  <p className="truncate text-sm text-foggy">
-                    {r.designation} · {r.department}
-                  </p>
-                </div>
+      <h2 className="mb-3 mt-8 text-lg font-bold text-hof">Recently added people</h2>
+      {state === "loading" && <SkeletonRows n={4} />}
+      {state === "error" && (
+        <Card className="p-8 text-center">
+          <p className="font-semibold text-hof">You are signed out</p>
+          <p className="mt-1 text-sm text-foggy">Log in to see your workspace.</p>
+          <Link
+            href="/login"
+            className="mt-4 inline-flex h-11 items-center rounded-full bg-rausch px-6 text-sm font-semibold text-white hover:bg-rausch-dark"
+          >
+            Go to login
+          </Link>
+        </Card>
+      )}
+      {state === "ready" && (
+        <Card className="divide-y divide-line-soft">
+          {rows.map((r) => (
+            <div key={r.employee_id} className="flex items-center gap-3 px-5 py-3.5">
+              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-hof text-sm font-bold text-white">
+                {initials(r.name)}
+              </span>
+              <div className="min-w-0">
+                <p className="truncate text-[15px] font-semibold text-hof">{r.name}</p>
+                <p className="truncate text-sm text-foggy">
+                  {r.designation} · {r.department}
+                </p>
               </div>
-            ))}
-          </Card>
-        )}
-      </div>
+            </div>
+          ))}
+        </Card>
+      )}
     </AppShell>
   );
 }

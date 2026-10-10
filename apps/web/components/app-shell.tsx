@@ -37,7 +37,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
     <div className="flex h-full flex-col gap-1 p-4">
       <Link href="/dashboard" onClick={onNavigate} className="mb-4 flex items-center gap-2 px-2">
         <span className="grid h-9 w-9 place-items-center rounded-card bg-rausch text-lg font-black text-white">H</span>
-        <span className="text-lg font-extrabold tracking-tight text-hof">hrms</span>
+        <span className="text-lg font-extrabold tracking-tight text-hof">HRMS</span>
       </Link>
       {NAV.map(({ label, href, icon: Icon }) => {
         const active = pathname === href;

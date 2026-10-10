@@ -40,7 +40,7 @@ export default function LoginPage() {
       <div className="w-full max-w-md">
         <Link href="/" className="mb-6 flex items-center justify-center gap-2 text-2xl font-extrabold tracking-tight text-rausch">
           <span className="grid h-9 w-9 place-items-center rounded-lg bg-rausch text-base font-black text-white">H</span>
-          hrms
+          HRMS
         </Link>
         <Card className="p-8">
           <h1 className="text-2xl font-extrabold tracking-tight text-hof">Welcome back</h1>

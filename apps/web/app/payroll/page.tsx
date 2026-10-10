@@ -3,7 +3,7 @@ import { EmptyState } from "../../components/ui";
 export default function Page() {
   return (
     <AppShell title="Payroll">
-      <EmptyState title="Coming in its phase" body="The payroll workflow has not been built yet. The sidebar and design tokens are ready for it." />
+      <EmptyState title="Payroll" body="Pay periods, batches and payslips will live here." />
     </AppShell>
   );
 }

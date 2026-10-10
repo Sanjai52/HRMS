@@ -3,7 +3,7 @@ import { EmptyState } from "../../../components/ui";
 export default function Page() {
   return (
     <AppShell title="Recruitment">
-      <EmptyState title="Coming in its phase" body="The hr/recruitment workflow has not been built yet. The sidebar and design tokens are ready for it." />
+      <EmptyState title="Recruitment" body="Job postings, applications and the hiring pipeline will live here." />
     </AppShell>
   );
 }
