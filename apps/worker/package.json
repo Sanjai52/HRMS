@@ -4,9 +4,21 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node src/index.mjs",
-    "typecheck": "echo worker-typecheck-ok",
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "lint": "echo lint-worker-ok",
-    "test": "echo worker-no-tests"
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@hrms/core": "0.1.0",
+    "bullmq": "^5.0.0",
+    "dotenv": "^16.4.5",
+    "ioredis": "^5.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
   }
 }

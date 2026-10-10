@@ -10,7 +10,10 @@
     "lint": "echo lint-core-ok",
     "test": "vitest run"
   },
-  "dependencies": {},
+  "dependencies": {
+    "bullmq": "^6.3.12",
+    "ioredis": "^6.0.0"
+  },
   "devDependencies": {
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"

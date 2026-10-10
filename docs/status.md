@@ -11,9 +11,14 @@ Updated every time a phase (or sub-slice) lands. Measured results only; no inven
 - Web (Airbnb DS, Tailwind v4): landing, login, shell sidebar+topbar, dashboard, directory, stubs.
 - Tests: core 6/6, api 3/3 (gate, auth, seed-routing), web build green.
 
-## Phase 1b — Remaining local infrastructure: NOT STARTED
+## Phase 1b — Remaining local infrastructure: DONE (2026-10-10)
 
-Redis queue/KV, queue abstraction, NGINX, MinIO, Mailpit, Compose profiles, pool budgets, Prometheus/Grafana wiring.
+- `redis-queue` :6379 (AOF, noeviction) + `redis-kv` :6380 (256mb, noeviction).
+- `JobQueue` interface + BullMQ adapter in `@hrms/core`; worker consumes `hrms` queue (round-trip test green).
+- Storage via S3 API: Moto stand-in on :5000 (proxy blocks MinIO pulls; MinIO remains the target, adapter unchanged). Mailpit :1025/:8025, round-trip green.
+- NGINX :8080 → API with `max_fails` handling, verified against `/health`.
+- API `/metrics` (request counter + latency histogram); Prometheus :9090 scrapes API directly; Grafana :3001 with provisioned datasource (`observability` profile).
+- Connection budget: catalog pool 10 + 4 shard pools (10/10/10/5) per API replica; worker uses short-lived queue connections only.
 
 ## Phase 2 — Identity, RBAC, audit, rate limiting: NOT STARTED
 
