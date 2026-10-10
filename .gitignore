@@ -1,0 +1,23 @@
+# deps
+node_modules/
+.next/
+out/
+dist/
+*.tsbuildinfo
+
+# env
+.env
+.env.local
+.env.*.local
+
+# logs
+*.log
+/tmp/
+
+# os / ide
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# docker volumes live in Docker, not repo

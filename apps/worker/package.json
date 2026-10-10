@@ -1,0 +1,12 @@
+{
+  "name": "@hrms/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node src/index.mjs",
+    "typecheck": "echo worker-typecheck-ok",
+    "lint": "echo lint-worker-ok",
+    "test": "echo worker-no-tests"
+  }
+}

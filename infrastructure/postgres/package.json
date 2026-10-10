@@ -1,0 +1,12 @@
+{
+  "name": "hrms-infra",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "migrate": "node infrastructure/postgres/runner.mjs",
+    "seed": "node infrastructure/postgres/seed.mjs"
+  },
+  "dependencies": {
+    "pg": "^8.13.0"
+  }
+}

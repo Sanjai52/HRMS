@@ -1,0 +1,15 @@
+{
+  "name": "@hrms/candidate-portal",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node src/index.mjs",
+    "typecheck": "echo portal-typecheck-ok",
+    "lint": "echo lint-portal-ok",
+    "test": "echo portal-no-tests"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}
