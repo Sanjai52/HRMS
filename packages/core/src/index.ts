@@ -15,3 +15,7 @@ export { AUTOCOMPLETE_DOMAIN, AUTOCOMPLETE_SCOPE, AUTOCOMPLETE_MAX_PREFIX, AUTOC
 export { runDispatcherOnce } from "./dispatcher.js";
 export type { DispatcherHandles, DispatchCounts } from "./dispatcher.js";
 export { ORG_TIMEZONE, LATE_AFTER, workdayOf, clockNow, isLate, countWorkdays } from "./leave-rules.js";
+export { computePay, monthRange, overlapWorkdays } from "./payroll.js";
+export type { PayInputs, PayBreakdown } from "./payroll.js";
+export { runPayrollChunk } from "./payroll-chunk.js";
+export type { ChunkDb } from "./payroll-chunk.js";

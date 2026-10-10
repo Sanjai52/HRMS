@@ -9,6 +9,7 @@ export class BullMqJobQueue implements JobQueue {
   constructor(redisUrl: string, queueName = "hrms") {
     this.connection = new Redis(redisUrl, { maxRetriesPerRequest: null });
     this.queue = new Queue(queueName, { connection: this.connection });
+    this.queue.on("error", (err) => console.error(`queue error: ${(err as Error).message}`));
   }
 
   async enqueue<T>(name: JobName, data: T, opts?: { jobId?: string }): Promise<{ jobId: string }> {

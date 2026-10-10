@@ -14,6 +14,8 @@ Candidate tables are declared separately and are NOT part of the employee migrat
 | leave_balances | employee | employee_id | bucket_id | 3 | employee_id,leave_type,year,used_days | no |
 | leave_requests | employee | employee_id | bucket_id | 4 | request_id,employee_id,status,version | no |
 | notifications | employee | employee_id | bucket_id | 5 | notification_id,employee_id,read_at | no |
+| salary_structures | employee | employee_id | bucket_id | 6 | employee_id,basic_paise,allowances_paise | no |
+| payroll_records | employee | employee_id | bucket_id | 7 | record_id,employee_id,period,net_paise | no |
 
 Future Phase 3+ tables (attendance, leave, payroll, performance, notifications, outbox_events) will be appended here with copy order parent-before-child. `outbox_events` when added is drained-before-copy and excluded from bucket copy. Catalog projections are derived and excluded.
 

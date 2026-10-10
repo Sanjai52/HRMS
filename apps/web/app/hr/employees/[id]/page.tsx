@@ -25,6 +25,8 @@ export default function EmployeeDetail({ params }: { params: Promise<{ id: strin
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({ name: "", department: "", designation: "" });
+  const [salary, setSalary] = useState({ basic: "", allowances: "", other: "", pf: "", tax: "" });
+  const [salaryMsg, setSalaryMsg] = useState("");
 
   function auth(): string {
     return sessionStorage.getItem("hrms_token") ?? "";
@@ -35,6 +37,12 @@ export default function EmployeeDetail({ params }: { params: Promise<{ id: strin
       const data = await api<Employee>(`/api/v1/employees/${id}`, auth());
       setEmp(data);
       setForm({ name: data.name, department: data.department, designation: data.designation });
+      try {
+        const s = await api<{ basic_paise: number; allowances_paise: number; other_deductions_paise: number; pf_pct: string; tax_pct: string } | null>(`/api/v1/payroll/structures/${id}`, auth());
+        if (s) setSalary({ basic: String(s.basic_paise / 100), allowances: String(s.allowances_paise / 100), other: String(s.other_deductions_paise / 100), pf: String(s.pf_pct), tax: String(s.tax_pct) });
+      } catch {
+        // no structure yet
+      }
     } catch (err) {
       setError((err as Error).message);
     }
@@ -124,6 +132,53 @@ export default function EmployeeDetail({ params }: { params: Promise<{ id: strin
                 {error}
               </p>
             )}
+          </Card>
+          <Card className="p-6">
+            <h2 className="text-lg font-bold text-hof">Salary structure</h2>
+            <p className="mt-1 text-sm text-foggy">Monthly amounts in rupees. Used to calculate payroll.</p>
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setSalaryMsg("");
+                try {
+                  await api(`/api/v1/payroll/structures`, auth(), {
+                    method: "POST",
+                    body: JSON.stringify({
+                      employeeId: id,
+                      basicPaise: Math.round(Number(salary.basic || 0) * 100),
+                      allowancesPaise: Math.round(Number(salary.allowances || 0) * 100),
+                      otherDeductionsPaise: Math.round(Number(salary.other || 0) * 100),
+                      pfPct: Number(salary.pf || 0),
+                      taxPct: Number(salary.tax || 0),
+                    }),
+                  });
+                  setSalaryMsg("Salary saved.");
+                } catch (err) {
+                  setSalaryMsg((err as Error).message);
+                }
+              }}
+              className="mt-4 grid gap-4 sm:grid-cols-2"
+            >
+              <Field label="Basic (₹/month)">
+                <TextInput inputMode="decimal" value={salary.basic} onChange={(e) => setSalary({ ...salary, basic: e.target.value })} required />
+              </Field>
+              <Field label="Allowances (₹/month)">
+                <TextInput inputMode="decimal" value={salary.allowances} onChange={(e) => setSalary({ ...salary, allowances: e.target.value })} />
+              </Field>
+              <Field label="Other deductions (₹/month)">
+                <TextInput inputMode="decimal" value={salary.other} onChange={(e) => setSalary({ ...salary, other: e.target.value })} />
+              </Field>
+              <Field label="PF % (demonstration)">
+                <TextInput inputMode="decimal" value={salary.pf} onChange={(e) => setSalary({ ...salary, pf: e.target.value })} />
+              </Field>
+              <Field label="Tax % (demonstration)">
+                <TextInput inputMode="decimal" value={salary.tax} onChange={(e) => setSalary({ ...salary, tax: e.target.value })} />
+              </Field>
+              <div className="flex items-end">
+                <Button type="submit" className="w-full">Save salary</Button>
+              </div>
+            </form>
+            {salaryMsg && <p className="mt-3 text-sm font-medium text-hof">{salaryMsg}</p>}
           </Card>
           <Card className="p-6">
             <h2 className="text-lg font-bold text-hof">Access</h2>

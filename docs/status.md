@@ -49,7 +49,17 @@ Updated every time a phase (or sub-slice) lands. Measured results only; no inven
 - Web: `/attendance`, `/leave` + `/leave/apply`, `/manager/team`, `/manager/leave`, `/hr/attendance`, `/hr/leave` (policies + override), `/notifications`, live dashboard cards.
 - Tests: attendance-leave 6/6, serial suite 19/19.
 
-## Phases 5–11: NOT STARTED
+## Phase 5 — Payroll: DONE (2026-10-10)
+
+- Migrations `008_shard_payroll` (salary_structures, payroll_records with unique employee+period) + `009_catalog_payroll` (batches with done/failed/skipped).
+- Paise-integer math in core with unit tests (gross/daily/LOP/PF/tax/net, half-up rounding, unpaid clamp); frozen month snapshots.
+- Async batches: one idempotent `payroll-chunk` job per shard (colon-free job IDs), worker computes attendance + approved-leave inputs, `ON CONFLICT DO NOTHING` reruns, batch reaches `COMPLETED`/`PARTIAL_FAILED`, per-employee payslip-ready notifications.
+- Salary setup post-activation only; payslips restricted to owner + HR/Admin (tested).
+- Web: `/hr/payroll`, `/hr/payroll/run`, `/hr/payroll/batches/:id` (live progress), `/payroll` + payslip breakdown, salary form on employee detail.
+- Hardening found by tests: queue failures mark batch `FAILED` instead of crashing; global 500 error boundary; BullMQ error listener.
+- Tests: payroll 3/3, core math 3/3, serial suite 22/22.
+
+## Phases 6–11: NOT STARTED
 
 ## Migration rule
 

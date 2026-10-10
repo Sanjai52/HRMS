@@ -1,0 +1,12 @@
+CREATE TABLE IF NOT EXISTS payroll_batches (
+  batch_id TEXT PRIMARY KEY,
+  period CHAR(7) NOT NULL,
+  status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'RUNNING', 'COMPLETED', 'PARTIAL_FAILED', 'FAILED', 'CANCELLED')),
+  total INT NOT NULL DEFAULT 0,
+  done INT NOT NULL DEFAULT 0,
+  failed INT NOT NULL DEFAULT 0,
+  skipped INT NOT NULL DEFAULT 0,
+  created_by TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (period, created_by, created_at)
+);

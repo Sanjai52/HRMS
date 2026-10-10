@@ -6,6 +6,7 @@ import { authRouter } from "./routes/auth.js";
 import { employeesRouter } from "./routes/employees.js";
 import { attendanceRouter } from "./routes/attendance.js";
 import { leaveRouter } from "./routes/leave.js";
+import { payrollRouter } from "./routes/payroll.js";
 import { notificationsRouter } from "./routes/notifications.js";
 import { healthRouter } from "./routes/health.js";
 import { adminRouter } from "./routes/admin.js";
@@ -28,12 +29,19 @@ app.use("/api/v1/auth", authRouter);
 app.use("/api/v1/employees", employeesRouter);
 app.use("/api/v1/attendance", attendanceRouter);
 app.use("/api/v1/leave", leaveRouter);
+app.use("/api/v1/payroll", payrollRouter);
 app.use("/api/v1/notifications", notificationsRouter);
 app.use("/api/v1/admin", adminRouter);
 app.use("/api/v1/search", searchRouter);
 app.use(systemRouter);
 app.use(healthRouter);
 app.use(metricsRouter);
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error("unhandled route error:", (err as Error).message);
+  res.status(500).json({ success: false, error: { code: "INTERNAL", message: "Something went wrong" } });
+});
 
 const port = Number(process.env.API_PORT ?? 4000);
 initIds(`api:${port}:${process.pid}`).catch((e) => {

@@ -3,7 +3,7 @@ import { Worker, type Job, Queue } from "bullmq";
 import { Redis } from "ioredis";
 import nodemailer from "nodemailer";
 import type { JobName } from "@hrms/core";
-import { runDispatcherOnce, loadActiveMap } from "@hrms/core";
+import { runDispatcherOnce, loadActiveMap, runPayrollChunk } from "@hrms/core";
 import { catalogPool as catalog, shardPools as shards } from "./pools.js";
 
 const queueConnection = new Redis(process.env.REDIS_QUEUE_URL ?? "redis://localhost:6379", {
@@ -22,6 +22,12 @@ async function handle(job: Job): Promise<unknown> {
   switch (job.name as JobName) {
     case "test-job":
       return { echoed: (job.data as { ping?: string }).ping ?? null, at: new Date().toISOString() };
+    case "payroll-chunk": {
+      const { batchId, period, shard } = job.data as { batchId: string; period: string; shard: string };
+      const pool = shards[shard];
+      if (!pool) throw new Error(`unknown-shard:${shard}`);
+      return runPayrollChunk({ catalog, shard: pool }, batchId, period, shard);
+    }
     case "notification": {
       const { notificationId, employeeId, shard } = job.data as { notificationId: string; employeeId: string; shard: string };
       const pool = shards[shard];
