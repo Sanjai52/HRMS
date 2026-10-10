@@ -3,7 +3,8 @@ import { Worker, type Job, Queue } from "bullmq";
 import { Redis } from "ioredis";
 import nodemailer from "nodemailer";
 import type { JobName } from "@hrms/core";
-import { runDispatcherOnce, loadActiveMap, runPayrollChunk } from "@hrms/core";
+import { runDispatcherOnce, loadActiveMap, runPayrollChunk, createIdIssuer, type IdIssuer } from "@hrms/core";
+import { runCrawlRun } from "./crawl.js";
 import { catalogPool as catalog, shardPools as shards } from "./pools.js";
 
 const queueConnection = new Redis(process.env.REDIS_QUEUE_URL ?? "redis://localhost:6379", {
@@ -18,6 +19,13 @@ const mailer = nodemailer.createTransport({
   secure: false,
 });
 
+let issuer: IdIssuer | null = null;
+createIdIssuer(catalog, `worker:${process.pid}`)
+  .then((i) => {
+    issuer = i;
+  })
+  .catch((e) => console.error("worker-id lease unavailable:", (e as Error).message));
+
 async function handle(job: Job): Promise<unknown> {
   switch (job.name as JobName) {
     case "test-job":
@@ -27,6 +35,19 @@ async function handle(job: Job): Promise<unknown> {
       const pool = shards[shard];
       if (!pool) throw new Error(`unknown-shard:${shard}`);
       return runPayrollChunk({ catalog, shard: pool }, batchId, period, shard);
+    }
+    case "crawler-run": {
+      const { runId } = job.data as { runId: string };
+      if (!issuer) throw new Error("worker-id lease unavailable");
+      return runCrawlRun(
+        {
+          catalog,
+          shards,
+          portalBase: process.env.PORTAL_BASE ?? "http://localhost:4100",
+          nextId: () => (issuer as IdIssuer).next(),
+        },
+        runId
+      );
     }
     case "notification": {
       const { notificationId, employeeId, shard } = job.data as { notificationId: string; employeeId: string; shard: string };

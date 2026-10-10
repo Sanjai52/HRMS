@@ -84,6 +84,17 @@ services:
       - "1025:1025"
       - "8025:8025"
 
+  candidate-portal:
+    image: node:22-alpine
+    working_dir: /app
+    command: ["sh", "-c", "npm install --no-save --no-audit --no-fund express@4 >/dev/null 2>&1; node src/index.mjs"]
+    environment:
+      PORTAL_PORT: "4100"
+    ports:
+      - "4100:4100"
+    volumes:
+      - ./apps/candidate-portal:/app
+
   nginx:
     image: nginx:alpine
     ports:

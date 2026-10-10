@@ -20,3 +20,7 @@ export type { PayInputs, PayBreakdown } from "./payroll.js";
 export { runPayrollChunk } from "./payroll-chunk.js";
 export type { ChunkDb } from "./payroll-chunk.js";
 export { CANDIDATE_SHARDS, STAGES, TERMINAL, canTransition, slugify, randomCode, isAllowedDestination, loadMapByDomain, buildCandidateMapV1 } from "./recruitment.js";
+export { createIdIssuer } from "./leases.js";
+export type { IdIssuer } from "./leases.js";
+export { HttpCrawler, parseListingIds, hasNextPage, parseProfile, normalizeEmail, fingerprint } from "./crawler.js";
+export type { FetchedPage, CrawlerProvider, RawProfile } from "./crawler.js";

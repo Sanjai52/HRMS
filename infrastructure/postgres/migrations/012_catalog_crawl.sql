@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS crawl_runs (
+  run_id TEXT PRIMARY KEY,
+  role TEXT NOT NULL DEFAULT '',
+  skills TEXT[] NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'RUNNING', 'COMPLETED', 'PARTIAL_FAILED', 'FAILED')),
+  pages INT NOT NULL DEFAULT 0,
+  discovered INT NOT NULL DEFAULT 0,
+  imported INT NOT NULL DEFAULT 0,
+  errors INT NOT NULL DEFAULT 0,
+  created_by TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  finished_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS crawl_pages (
+  run_id TEXT NOT NULL,
+  url TEXT NOT NULL,
+  status INT NOT NULL DEFAULT 0,
+  error TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (run_id, url)
+);

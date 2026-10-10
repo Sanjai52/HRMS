@@ -69,7 +69,16 @@ Updated every time a phase (or sub-slice) lands. Measured results only; no inven
 - Web: pipeline dashboard, job postings + short-link display, applications + detail stepper, candidate pool + detail, public `/jobs`, `/jobs/:slug`, apply form, status tracker.
 - Tests: recruitment 2/2, serial suite 24/24.
 
-## Phases 7–11: NOT STARTED
+## Phase 7 — Candidate portal and crawler: DONE (2026-10-10)
+
+- Portal (Compose `:4100`) serves deterministic fixtures: pagination, duplicate email, missing/invalid email, empty skills, malformed HTML, slow responses, 404/500 cases.
+- `CrawlerProvider` interface with `HttpCrawler` default (8s timeout, 1 bounded retry, concurrency 2, 10-page cap); pure parse/normalize/fingerprint unit tests.
+- Worker `crawler-run` jobs: listing crawl → profile fetch → email-claim dedupe (fingerprint fallback for missing email, `portal-unverified` source) → candidate-domain routing → run ledger with pages/discovered/imported/errors.
+- Sourcing API (HR/Admin): start run, list, detail with per-page outcomes; reruns import zero new records (tested).
+- Web: `/hr/recruitment/sourcing` (role/skills form + live run list) and run detail with per-page status.
+- Tests: sourcing 2/2, core parser 4/4, serial suite 26/26.
+
+## Phases 8–11: NOT STARTED
 
 ## Migration rule
 
