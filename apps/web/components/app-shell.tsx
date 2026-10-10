@@ -18,18 +18,26 @@ import {
   SignOut,
 } from "@phosphor-icons/react";
 import { cn } from "../lib/cn";
+import { rolesOf } from "../lib/api";
 
 const NAV = [
-  { label: "Dashboard", href: "/dashboard", icon: House },
-  { label: "Employees", href: "/hr/employees", icon: Users },
-  { label: "Attendance", href: "/attendance", icon: CalendarCheck },
-  { label: "Leave", href: "/leave", icon: Suitcase },
-  { label: "Payroll", href: "/payroll", icon: Wallet },
-  { label: "Recruitment", href: "/hr/recruitment", icon: Briefcase },
-  { label: "Performance", href: "/performance", icon: ChartLineUp },
-  { label: "Reports", href: "/hr/reports", icon: ChartLineUp },
-  { label: "Settings", href: "/settings", icon: Gear },
+  { label: "Dashboard", href: "/dashboard", icon: House, roles: ["EMPLOYEE", "MANAGER", "HR", "ADMIN"] },
+  { label: "Employees", href: "/hr/employees", icon: Users, roles: ["MANAGER", "HR", "ADMIN"] },
+  { label: "Attendance", href: "/attendance", icon: CalendarCheck, roles: ["EMPLOYEE", "MANAGER", "HR", "ADMIN"] },
+  { label: "Leave", href: "/leave", icon: Suitcase, roles: ["EMPLOYEE", "MANAGER", "HR", "ADMIN"] },
+  { label: "Payroll", href: "/payroll", icon: Wallet, roles: ["HR", "ADMIN"] },
+  { label: "Recruitment", href: "/hr/recruitment", icon: Briefcase, roles: ["HR", "ADMIN"] },
+  { label: "Performance", href: "/performance", icon: ChartLineUp, roles: ["EMPLOYEE", "MANAGER", "HR", "ADMIN"] },
+  { label: "Reports", href: "/hr/reports", icon: ChartLineUp, roles: ["HR", "ADMIN"] },
+  { label: "Settings", href: "/settings", icon: Gear, roles: ["ADMIN"] },
 ] as const;
+
+function visibleNav(): Array<(typeof NAV)[number]> {
+  if (typeof window === "undefined") return [...NAV];
+  const roles = rolesOf(sessionStorage.getItem("hrms_token"));
+  if (roles.length === 0) return [...NAV];
+  return NAV.filter((item) => item.roles.some((r) => roles.includes(r)));
+}
 
 function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
@@ -39,7 +47,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         <span className="grid h-9 w-9 place-items-center rounded-card bg-rausch text-lg font-black text-white">H</span>
         <span className="text-lg font-extrabold tracking-tight text-hof">HRMS</span>
       </Link>
-      {NAV.map(({ label, href, icon: Icon }) => {
+      {visibleNav().map(({ label, href, icon: Icon }) => {
         const active = pathname === href;
         return (
           <Link
@@ -61,6 +69,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         <button
           onClick={() => {
             sessionStorage.removeItem("hrms_token");
+            sessionStorage.removeItem("hrms_csrf");
             window.location.href = "/login";
           }}
           className="flex w-full items-center gap-3 rounded-input px-3 py-2.5 text-[15px] text-foggy transition hover:bg-pearl hover:text-hof"

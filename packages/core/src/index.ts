@@ -8,3 +8,5 @@ export type { ShardId, ActiveMap, Queryable, PoolLike, PoolClientLike } from "./
 export type { JobName, JobEnvelope, JobQueue } from "./queue.js";
 export { BullMqJobQueue } from "./bullmq-queue.js";
 export type { StorageProvider, EmailMessage, EmailProvider } from "./providers.js";
+export { TokenBucket } from "./rate-limit.js";
+export type { BucketResult } from "./rate-limit.js";
