@@ -40,7 +40,16 @@ Updated every time a phase (or sub-slice) lands. Measured results only; no inven
 - Web: `/hr/employees/new` (invite + onboard), `/hr/employees/:id` (view/edit/deactivate), directory links, role-aware sidebar.
 - Tests: lifecycle 4/4, serial suite 13/13 (rate-limit isolation via per-file reset + `--no-file-parallelism`).
 
-## Phases 4–11: NOT STARTED
+## Phase 4 — Attendance and leave: DONE (2026-10-10)
+
+- Migrations `006_shard_attendance_leave` (attendance, leave_balances/requests, notifications, manager_id) + `007_catalog_leave_config` (policies CASUAL/SICK/EARNED, 2026 holidays).
+- Attendance: idempotent check-in/out, late-after-09:30, monthly history + summary, HR day view via owned-bucket scatter with `partial` metadata.
+- Leave: weekday-only day count minus holidays, single-year guard, overlap + balance checks, `PENDING_MANAGER→PENDING_HR→APPROVED` chain with no-manager skip, self-approval block, HR peer rule, audited HR override with mandatory reason, cancel with balance restore, deactivation reassigns team requests to HR.
+- `LEAVE_DECIDED` outbox → in-app notification on the requester's shard + email via worker (Mailpit-verified).
+- Web: `/attendance`, `/leave` + `/leave/apply`, `/manager/team`, `/manager/leave`, `/hr/attendance`, `/hr/leave` (policies + override), `/notifications`, live dashboard cards.
+- Tests: attendance-leave 6/6, serial suite 19/19.
+
+## Phases 5–11: NOT STARTED
 
 ## Migration rule
 

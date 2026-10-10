@@ -4,6 +4,9 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import { authRouter } from "./routes/auth.js";
 import { employeesRouter } from "./routes/employees.js";
+import { attendanceRouter } from "./routes/attendance.js";
+import { leaveRouter } from "./routes/leave.js";
+import { notificationsRouter } from "./routes/notifications.js";
 import { healthRouter } from "./routes/health.js";
 import { adminRouter } from "./routes/admin.js";
 import { systemRouter } from "./routes/system.js";
@@ -23,6 +26,9 @@ app.use((req, res, next) => {
 
 app.use("/api/v1/auth", authRouter);
 app.use("/api/v1/employees", employeesRouter);
+app.use("/api/v1/attendance", attendanceRouter);
+app.use("/api/v1/leave", leaveRouter);
+app.use("/api/v1/notifications", notificationsRouter);
 app.use("/api/v1/admin", adminRouter);
 app.use("/api/v1/search", searchRouter);
 app.use(systemRouter);

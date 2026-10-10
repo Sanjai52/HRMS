@@ -121,6 +121,48 @@ employeesRouter.post("/onboard", requireAuth, requireRoles("HR", "ADMIN"), async
   }
 });
 
+employeesRouter.get("/team", requireAuth, requireRoles("MANAGER", "HR", "ADMIN"), async (req: AuthedRequest, res) => {
+  const roles = req.roles ?? [];
+  const { map } = await loadActiveMap(catalogPool);
+  const owned: Record<string, number[]> = {};
+  for (const [bucket, shard] of map) {
+    (owned[shard] ??= []).push(bucket);
+  }
+  const out: unknown[] = [];
+  if (roles.includes("MANAGER") && !roles.includes("HR") && !roles.includes("ADMIN")) {
+    const me = await catalogPool.query("SELECT email_norm FROM users WHERE user_id = $1", [req.userId]);
+    if (me.rows.length === 0) {
+      res.json({ success: true, data: [] });
+      return;
+    }
+    const selfRow = await catalogPool.query("SELECT employee_id FROM employee_directory WHERE email_norm = $1", [me.rows[0].email_norm]);
+    const myId = selfRow.rows[0]?.employee_id as string | undefined;
+    if (!myId) {
+      res.json({ success: true, data: [] });
+      return;
+    }
+    for (const [shard, pool] of Object.entries(shardPools)) {
+      if (shard === "shard-4") continue;
+      const r = await pool.query(
+        "SELECT employee_id, name, email, department, designation, status FROM employees WHERE manager_id = $1 AND bucket_id = ANY($2) ORDER BY name",
+        [myId, owned[shard] ?? []]
+      );
+      out.push(...r.rows);
+    }
+  } else {
+    const department = typeof req.query.department === "string" ? req.query.department : null;
+    for (const [shard, pool] of Object.entries(shardPools)) {
+      if (shard === "shard-4") continue;
+      const r = await pool.query(
+        "SELECT employee_id, name, email, department, designation, status FROM employees WHERE bucket_id = ANY($2) AND ($1::text IS NULL OR department = $1) ORDER BY name LIMIT 50",
+        [department, owned[shard] ?? []]
+      );
+      out.push(...r.rows);
+    }
+  }
+  res.json({ success: true, data: out });
+});
+
 async function shardRow(employeeId: string): Promise<{ shard: string; row: Record<string, unknown> } | null> {
   const { map } = await loadActiveMap(catalogPool);
   const shard = resolveShard(employeeId, map);
@@ -152,11 +194,12 @@ employeesRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
 });
 
 employeesRouter.patch("/:id", requireAuth, requireRoles("HR", "ADMIN"), async (req: AuthedRequest, res) => {
-  const { name, department, designation, version } = req.body as {
+  const { name, department, designation, version, managerId } = req.body as {
     name?: string;
     department?: string;
     designation?: string;
     version?: number;
+    managerId?: string | null;
   };
   if (typeof version !== "number") {
     res.status(400).json(errorEnvelope("VALIDATION_ERROR", "Current version is required"));
@@ -181,9 +224,21 @@ employeesRouter.patch("/:id", requireAuth, requireRoles("HR", "ADMIN"), async (r
   }
   try {
     const updated = await withFencedWrite(pool, async (c) => {
+      if (managerId !== undefined) {
+        if (managerId === req.params.id) {
+          throw new Error("SELF_MANAGER");
+        }
+        if (managerId !== null) {
+          const exists = await c.query("SELECT 1 FROM employees WHERE employee_id = $1", [managerId]);
+          if (exists.rows.length === 0) {
+            const dir = await catalogPool.query("SELECT 1 FROM employee_directory WHERE employee_id = $1", [managerId]);
+            if (dir.rows.length === 0) throw new Error("UNKNOWN_MANAGER");
+          }
+        }
+      }
       const r = await c.query(
-        "UPDATE employees SET name = COALESCE($2, name), department = COALESCE($3, department), designation = COALESCE($4, designation), version = version + 1, updated_at = now() WHERE employee_id = $1 AND version = $5 RETURNING employee_id, bucket_id, name, email, department, designation, version",
-        [req.params.id, name ?? null, department ?? null, designation ?? null, version]
+        "UPDATE employees SET name = COALESCE($2, name), department = COALESCE($3, department), designation = COALESCE($4, designation), manager_id = COALESCE($6, manager_id), version = version + 1, updated_at = now() WHERE employee_id = $1 AND version = $5 RETURNING employee_id, bucket_id, name, email, department, designation, manager_id, version",
+        [req.params.id, name ?? null, department ?? null, designation ?? null, version, managerId ?? null]
       );
       if (r.rows.length === 0) return null;
       const row = r.rows[0] as { employee_id: string; bucket_id: number; name: string; email: string; department: string; designation: string; version: number };
@@ -204,6 +259,10 @@ employeesRouter.patch("/:id", requireAuth, requireRoles("HR", "ADMIN"), async (r
   } catch (e) {
     if (e instanceof GateClosedError) {
       res.status(503).json(errorEnvelope("GATE_CLOSED", "Writes are paused for maintenance. Try again shortly."));
+      return;
+    }
+    if ((e as Error).message === "SELF_MANAGER" || (e as Error).message === "UNKNOWN_MANAGER") {
+      res.status(400).json(errorEnvelope("VALIDATION_ERROR", "Choose a valid manager"));
       return;
     }
     throw e;
@@ -256,6 +315,15 @@ employeesRouter.post("/:id/deactivate", requireAuth, requireRoles("HR", "ADMIN")
     await catalogPool.query("UPDATE users SET status = 'INACTIVE' WHERE email_norm = $1", [row.email]);
     const u = await catalogPool.query("SELECT user_id FROM users WHERE email_norm = $1", [row.email]);
     if (u.rows.length > 0) await destroyUserSessions(u.rows[0].user_id as string);
+    const { map: reassignMap } = await loadActiveMap(catalogPool);
+    for (const [reShard, rePool] of Object.entries(shardPools)) {
+      if (reShard === "shard-4") continue;
+      const owned = [...reassignMap].filter(([, s]) => s === reShard).map(([b]) => b);
+      await rePool.query(
+        "UPDATE leave_requests SET status = 'PENDING_HR', version = version + 1 WHERE status = 'PENDING_MANAGER' AND bucket_id = ANY($2) AND employee_id IN (SELECT employee_id FROM employees WHERE manager_id = $1)",
+        [req.params.id, owned]
+      );
+    }
     res.json({ success: true, data: { employeeId: row.employee_id } });
   } catch (e) {
     if (e instanceof GateClosedError) {

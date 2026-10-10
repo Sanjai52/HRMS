@@ -4,6 +4,7 @@ import {
   suggestMember,
   AUTOCOMPLETE_TOP_K,
 } from "./autocomplete.js";
+import { stableEmployeeBucket } from "./bucket.js";
 import type { PoolLike, Queryable } from "./shard-router.js";
 
 export interface SortedSet {
@@ -18,6 +19,8 @@ export interface DispatcherHandles {
   catalog: Queryable;
   shards: Record<string, PoolLike>;
   redis: SortedSet;
+  map?: Map<number, string>;
+  enqueue?(name: string, data: unknown, opts?: { jobId?: string }): Promise<unknown>;
 }
 
 export interface DispatchCounts {
@@ -82,6 +85,30 @@ async function applyEvent(
     case "EMPLOYEE_DEACTIVATED": {
       await handles.catalog.query("DELETE FROM employee_directory WHERE employee_id = $1", [event.employee_id]);
       await removeAutocomplete(handles.redis, event.employee_id, name, email);
+      break;
+    }
+    case "LEAVE_DECIDED": {
+      const requestId = typeof p.requestId === "string" ? p.requestId : "";
+      const status = typeof p.status === "string" ? p.status : "";
+      const map = handles.map;
+      if (!map) throw new Error("no-routing-map-for-notification");
+      const bucket = stableEmployeeBucket(event.employee_id);
+      const shard = map.get(bucket);
+      const pool = shard ? handles.shards[shard] : undefined;
+      if (!pool) throw new Error(`no-shard-for-notification:${bucket}`);
+      const title = status === "APPROVED" ? "Leave approved" : status === "REJECTED" ? "Leave rejected" : `Leave ${status.toLowerCase()}`;
+      const nclient = await pool.connect();
+      try {
+        await nclient.query(
+          "INSERT INTO notifications (notification_id, employee_id, bucket_id, kind, title, body) VALUES ($1, $2, $3, 'leave', $4, $5) ON CONFLICT DO NOTHING",
+          [event.event_id, event.employee_id, bucket, title, `Request ${requestId} is now ${status}.`]
+        );
+      } finally {
+        nclient.release();
+      }
+      if (handles.enqueue) {
+        await handles.enqueue("notification", { notificationId: event.event_id, employeeId: event.employee_id, shard }, { jobId: event.event_id });
+      }
       break;
     }
     case "AUDIT": {

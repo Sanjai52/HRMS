@@ -10,6 +10,10 @@ Candidate tables are declared separately and are NOT part of the employee migrat
 |---|---|---|---|---|---|---|
 | employees | employee | employee_id | bucket_id | 1 | employee_id,bucket_id,email,name,status | no |
 | outbox_events | employee | employee_id | bucket_id | — | — | yes (drained before copy, never copied) |
+| attendance | employee | employee_id | bucket_id | 2 | employee_id,bucket_id,workday,status | no |
+| leave_balances | employee | employee_id | bucket_id | 3 | employee_id,leave_type,year,used_days | no |
+| leave_requests | employee | employee_id | bucket_id | 4 | request_id,employee_id,status,version | no |
+| notifications | employee | employee_id | bucket_id | 5 | notification_id,employee_id,read_at | no |
 
 Future Phase 3+ tables (attendance, leave, payroll, performance, notifications, outbox_events) will be appended here with copy order parent-before-child. `outbox_events` when added is drained-before-copy and excluded from bucket copy. Catalog projections are derived and excluded.
 

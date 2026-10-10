@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { errorEnvelope, runDispatcherOnce } from "@hrms/core";
+import { errorEnvelope, runDispatcherOnce, loadActiveMap, BullMqJobQueue } from "@hrms/core";
 import { redisKv } from "../db/redis.js";
 import { catalogPool, shardPools } from "../db/pools.js";
 
@@ -24,6 +24,18 @@ systemRouter.post("/system/test/run-dispatcher", async (_req, res) => {
     res.status(404).json(errorEnvelope("NOT_FOUND", "Not found"));
     return;
   }
-  const counts = await runDispatcherOnce({ catalog: catalogPool, shards: shardPools, redis: redisKv() });
-  res.json({ success: true, data: counts });
+  const { map } = await loadActiveMap(catalogPool);
+  const queue = new BullMqJobQueue(process.env.REDIS_QUEUE_URL ?? "redis://localhost:6379");
+  try {
+    const counts = await runDispatcherOnce({
+      catalog: catalogPool,
+      shards: shardPools,
+      redis: redisKv(),
+      map,
+      enqueue: (name, data, opts) => queue.enqueue(name as "notification", data, opts),
+    });
+    res.json({ success: true, data: counts });
+  } finally {
+    await queue.close();
+  }
 });

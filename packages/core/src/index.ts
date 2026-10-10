@@ -14,3 +14,4 @@ export { Snowflake, ClockBackwardError, LeaseExpiredError, acquireWorkerLease, r
 export { AUTOCOMPLETE_DOMAIN, AUTOCOMPLETE_SCOPE, AUTOCOMPLETE_MAX_PREFIX, AUTOCOMPLETE_TOP_K, normalizePrefix, prefixesFor, suggestKey, suggestMember, parseSuggestMember } from "./autocomplete.js";
 export { runDispatcherOnce } from "./dispatcher.js";
 export type { DispatcherHandles, DispatchCounts } from "./dispatcher.js";
+export { ORG_TIMEZONE, LATE_AFTER, workdayOf, clockNow, isLate, countWorkdays } from "./leave-rules.js";
