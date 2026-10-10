@@ -122,31 +122,35 @@ async function applyEvent(
       throw new Error(`unknown-event-type:${event.type}`);
   }
 }
-
 export async function runDispatcherOnce(handles: DispatcherHandles): Promise<DispatchCounts> {
   let delivered = 0;
   let failed = 0;
-  for (const pool of Object.values(handles.shards)) {
-    const client = await pool.connect();
-    try {
-      const r = await client.query(
-        "SELECT event_id, employee_id, bucket_id, type, payload, version, attempts FROM outbox_events WHERE delivered_at IS NULL AND attempts < 10 ORDER BY created_at LIMIT 50 FOR UPDATE SKIP LOCKED"
-      );      for (const row of r.rows as Array<{ event_id: string; employee_id: string; type: string; payload: Record<string, unknown>; version: number }>) {
-        try {
-          await applyEvent(handles, row);
-          await client.query("UPDATE outbox_events SET delivered_at = now() WHERE event_id = $1", [row.event_id]);
-          delivered += 1;
-        } catch (e) {
-          failed += 1;
-          await client.query("UPDATE outbox_events SET attempts = attempts + 1, last_error = $2 WHERE event_id = $1", [
-            row.event_id,
-            String((e as Error).message ?? e).slice(0, 500),
-          ]);
+  async function drain(table: string, idCol: string, ownerCol: string, bucketCol: string, versionExpr: string): Promise<void> {
+    for (const pool of Object.values(handles.shards)) {
+      const client = await pool.connect();
+      try {
+        const r = await client.query(
+          `SELECT event_id, ${ownerCol} AS employee_id, ${bucketCol} AS bucket_id, type, payload, ${versionExpr} AS version, attempts FROM ${table} WHERE delivered_at IS NULL AND attempts < 10 ORDER BY created_at LIMIT 50 FOR UPDATE SKIP LOCKED`
+        );
+        for (const row of r.rows as Array<{ event_id: string; employee_id: string; type: string; payload: Record<string, unknown>; version: number }>) {
+          try {
+            await applyEvent(handles, row);
+            await client.query(`UPDATE ${table} SET delivered_at = now() WHERE ${idCol} = $1`, [row.event_id]);
+            delivered += 1;
+          } catch (e) {
+            failed += 1;
+            await client.query(`UPDATE ${table} SET attempts = attempts + 1, last_error = $2 WHERE ${idCol} = $1`, [
+              row.event_id,
+              String((e as Error).message ?? e).slice(0, 500),
+            ]);
+          }
         }
+      } finally {
+        client.release();
       }
-    } finally {
-      client.release();
     }
   }
+  await drain("outbox_events", "event_id", "employee_id", "bucket_id", "COALESCE(version, 1)");
+  await drain("candidate_outbox", "event_id", "candidate_id", "candidate_bucket_id", "1");
   return { delivered, failed };
 }

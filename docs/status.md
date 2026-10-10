@@ -59,7 +59,17 @@ Updated every time a phase (or sub-slice) lands. Measured results only; no inven
 - Hardening found by tests: queue failures mark batch `FAILED` instead of crashing; global 500 error boundary; BullMQ error listener.
 - Tests: payroll 3/3, core math 3/3, serial suite 22/22.
 
-## Phases 6–11: NOT STARTED
+## Phase 6 — Recruitment and URL shortener: DONE (2026-10-10)
+
+- Migrations `010_catalog_jobs` (jobs, short_urls, candidate claims, application index, status tokens, candidate routing-map domain) + `011_candidate_shards` (candidates, applications, stage history, interviews, assessments, candidate_outbox).
+- Candidate routing by `candidate_id` through a separate active `candidate` map pinned to shards 1–3; fenced candidate writes; candidate-outbox `AUDIT` events projected by the dispatcher (full audit atomicity on candidate shards deferred, noted).
+- Jobs CRUD + public list/detail; application intake with resume validation (5 MB, PDF/Word + magic bytes, random S3 keys); duplicate-application guard; high-entropy revocable status tokens with minimal summaries.
+- Stage machine with transition + version guards, interview/assessment records, idempotent SELECTED→invitation conversion.
+- Short links: Base62 codes with collision retry, `/jobs` allow-list, Redis cache, click counts, rate-limited redirect; off-allow-list rejected (tested).
+- Web: pipeline dashboard, job postings + short-link display, applications + detail stepper, candidate pool + detail, public `/jobs`, `/jobs/:slug`, apply form, status tracker.
+- Tests: recruitment 2/2, serial suite 24/24.
+
+## Phases 7–11: NOT STARTED
 
 ## Migration rule
 

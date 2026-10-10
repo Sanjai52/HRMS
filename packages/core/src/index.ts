@@ -19,3 +19,4 @@ export { computePay, monthRange, overlapWorkdays } from "./payroll.js";
 export type { PayInputs, PayBreakdown } from "./payroll.js";
 export { runPayrollChunk } from "./payroll-chunk.js";
 export type { ChunkDb } from "./payroll-chunk.js";
+export { CANDIDATE_SHARDS, STAGES, TERMINAL, canTransition, slugify, randomCode, isAllowedDestination, loadMapByDomain, buildCandidateMapV1 } from "./recruitment.js";

@@ -17,6 +17,17 @@ Candidate tables are declared separately and are NOT part of the employee migrat
 | salary_structures | employee | employee_id | bucket_id | 6 | employee_id,basic_paise,allowances_paise | no |
 | payroll_records | employee | employee_id | bucket_id | 7 | record_id,employee_id,period,net_paise | no |
 
+## Candidate domain (routing map: candidate active version, pinned shards 1–3 in v1)
+
+| table | domain | owner key | bucket col | copy order | checksum cols | excluded |
+|---|---|---|---|---|---|---|
+| candidates | candidate | candidate_id | candidate_bucket_id | 1 | candidate_id,candidate_bucket_id,email | no |
+| applications | candidate | candidate_id | candidate_bucket_id | 2 | application_id,candidate_id,job_id,stage | no |
+| application_stage_history | candidate | candidate_id | candidate_bucket_id | 3 | history_id,application_id,to_stage | no |
+| interviews | candidate | candidate_id | candidate_bucket_id | 4 | interview_id,application_id,round | no |
+| assessments | candidate | candidate_id | candidate_bucket_id | 5 | assessment_id,application_id,type | no |
+| candidate_outbox | candidate | candidate_id | candidate_bucket_id | — | — | yes (drained before copy, never copied) |
+
 Future Phase 3+ tables (attendance, leave, payroll, performance, notifications, outbox_events) will be appended here with copy order parent-before-child. `outbox_events` when added is drained-before-copy and excluded from bucket copy. Catalog projections are derived and excluded.
 
 ## Candidate domain (routing map: candidate-v1, pinned shards 1-3 in v1)
