@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import type { Pool } from "pg";
 
 export interface AuditEvent {
   actor: string;
@@ -20,5 +19,3 @@ export async function writeAudit(
   );
   return eventId;
 }
-
-export type { Pool };

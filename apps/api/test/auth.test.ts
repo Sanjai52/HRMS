@@ -1,8 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
 
 const base = process.env.API_BASE ?? "http://localhost:4000";
 
 describe("Phase 1a auth slice", () => {
+  beforeAll(async () => {
+    await fetch(`${base}/system/test/reset-limiter`, { method: "POST" });
+  });
   it("seeded HR can login and read directory; bad password rejected; anonymous denied", async () => {
     const login = await fetch(`${base}/api/v1/auth/login`, {
       method: "POST",

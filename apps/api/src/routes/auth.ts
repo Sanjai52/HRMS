@@ -124,8 +124,14 @@ authRouter.post("/invitations", requireAuth, requireRoles("HR", "ADMIN"), async 
   }
 });
 
-authRouter.post("/accept", loginLimit, async (req, res) => {
-  const { token, password } = req.body as { token?: string; password?: string };
+authRouter.get("/invitations", requireAuth, requireRoles("HR", "ADMIN"), async (_req, res) => {
+  const rows = await catalogPool.query(
+    "SELECT invitation_id, email, name, role, status, created_at, expires_at FROM invitations ORDER BY created_at DESC LIMIT 100"
+  );
+  res.json({ success: true, data: rows.rows });
+});
+
+authRouter.post("/accept", loginLimit, async (req, res) => {  const { token, password } = req.body as { token?: string; password?: string };
   if (!token || !password || password.length < 8) {
     res.status(400).json(errorEnvelope("VALIDATION_ERROR", "A valid invitation token and a password of 8+ characters are required"));
     return;

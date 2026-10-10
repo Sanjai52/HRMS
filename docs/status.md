@@ -30,7 +30,15 @@ Updated every time a phase (or sub-slice) lands. Measured results only; no inven
 - Web: `/register` invitation-acceptance page, login stores CSRF, `lib/api` handles 401/429 with `credentials:include`.
 - Tests: identity 6/6 (refresh rotation/reuse, CSRF logout, invite lifecycle, RBAC denials, burst 429).
 
-## Phase 3 — Employee management, activation, directory: NOT STARTED (directory currently seed-populated, outbox pending)
+## Phase 3 — Employee management, activation, directory: DONE (2026-10-10)
+
+- Migrations `004_shard_outbox` (outbox_events, drained-not-copied) + `005_catalog_leases`.
+- Snowflake IDs (41/10/12, epoch 2026-01-01, string JSON) with durable catalog leases (60s TTL, 10s renew, 15s margin); API acquires a lease at startup and fails event writes closed without one.
+- Onboarding: invitation `RESERVED` → fenced shard employee insert + outbox `EMPLOYEE_CREATED` → invitation `ACTIVE` + atomic audit. Version-checked update (`409` on stale) and deactivation (login blocked, sessions destroyed, `AUDIT` outbox event).
+- Dispatcher in worker (2s loop, `SKIP LOCKED`, version-guarded directory upserts, dead-letter after 10 attempts) + env-gated test trigger + Admin rebuild endpoint (audited, does not resurrect inactive).
+- Autocomplete: Redis sorted-set prefix index (`org/all`), scoped suggest API with catalog fallback on miss; topbar dropdown wired to employee detail pages.
+- Web: `/hr/employees/new` (invite + onboard), `/hr/employees/:id` (view/edit/deactivate), directory links, role-aware sidebar.
+- Tests: lifecycle 4/4, serial suite 13/13 (rate-limit isolation via per-file reset + `--no-file-parallelism`).
 
 ## Phases 4–11: NOT STARTED
 

@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState, type ReactNode } from "react";
+import { useState, useRef, useEffect, type ReactNode } from "react";
 import {
   House,
   Users,
@@ -82,9 +82,44 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
+interface Suggestion {
+  employeeId: string;
+  name: string;
+  department: string;
+}
+
 export function AppShell({ children, title }: { children: ReactNode; title: string }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [showSuggest, setShowSuggest] = useState(false);
+  const suggestTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (suggestTimer.current) clearTimeout(suggestTimer.current);
+    const token = typeof window !== "undefined" ? sessionStorage.getItem("hrms_token") : null;
+    if (!token || q.trim().length < 2) {
+      setSuggestions([]);
+      return;
+    }
+    suggestTimer.current = setTimeout(async () => {
+      try {
+        const base = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:4000";
+        const res = await fetch(`${base}/api/v1/search/suggest?q=${encodeURIComponent(q.trim())}&limit=6`, {
+          headers: { authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return;
+        const body = (await res.json()) as { data: Suggestion[] };
+        setSuggestions(body.data);
+        setShowSuggest(true);
+      } catch {
+        // suggestions are best-effort; full search always works
+      }
+    }, 180);
+    return () => {
+      if (suggestTimer.current) clearTimeout(suggestTimer.current);
+    };
+  }, [q]);
 
   return (
     <div className="min-h-dvh bg-white">
@@ -117,22 +152,58 @@ export function AppShell({ children, title }: { children: ReactNode; title: stri
           >
             <List size={22} />
           </button>
-          <form
-            className="flex h-11 max-w-md flex-1 items-center gap-2 rounded-full border border-line bg-pearl/60 px-4"
-            onSubmit={(e) => {
-              e.preventDefault();
-              window.location.href = `/hr/employees?q=${encodeURIComponent(q)}`;
-            }}
-          >
-            <MagnifyingGlass size={18} className="shrink-0 text-foggy" />
-            <input
-              aria-label="Search employees"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search people, teams, roles"
-              className="w-full bg-transparent text-sm text-hof outline-none placeholder:text-foggy"
-            />
-          </form>
+          <div className="relative max-w-md flex-1">
+            <form
+              className="flex h-11 items-center gap-2 rounded-full border border-line bg-pearl/60 px-4"
+              onSubmit={(e) => {
+                e.preventDefault();
+                setShowSuggest(false);
+                window.location.href = `/hr/employees?q=${encodeURIComponent(q)}`;
+              }}
+            >
+              <MagnifyingGlass size={18} className="shrink-0 text-foggy" />
+              <input
+                aria-label="Search employees"
+                role="combobox"
+                aria-expanded={showSuggest && suggestions.length > 0}
+                aria-controls="topbar-suggestions"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                onFocus={() => suggestions.length > 0 && setShowSuggest(true)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") setShowSuggest(false);
+                }}
+                placeholder="Search people, teams, roles"
+                className="w-full bg-transparent text-sm text-hof outline-none placeholder:text-foggy"
+              />
+            </form>
+            {showSuggest && suggestions.length > 0 && (
+              <ul
+                id="topbar-suggestions"
+                role="listbox"
+                aria-label="Employee suggestions"
+                className="absolute inset-x-0 top-12 overflow-hidden rounded-card border border-line-soft bg-white shadow-pop"
+              >
+                {suggestions.map((s) => (
+                  <li key={s.employeeId} role="option" aria-selected="false">
+                    <Link
+                      href={`/hr/employees/${s.employeeId}`}
+                      onClick={() => setShowSuggest(false)}
+                      className="flex items-center gap-3 px-4 py-2.5 transition hover:bg-pearl"
+                    >
+                      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-rausch/10 text-xs font-extrabold text-rausch-dark">
+                        {s.name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase()}
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-semibold text-hof">{s.name}</span>
+                        <span className="block truncate text-xs text-foggy">{s.department}</span>
+                      </span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
           <div className="ml-auto flex items-center gap-2">
             <Link
               href="/notifications"

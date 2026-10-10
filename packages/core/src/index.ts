@@ -10,3 +10,7 @@ export { BullMqJobQueue } from "./bullmq-queue.js";
 export type { StorageProvider, EmailMessage, EmailProvider } from "./providers.js";
 export { TokenBucket } from "./rate-limit.js";
 export type { BucketResult } from "./rate-limit.js";
+export { Snowflake, ClockBackwardError, LeaseExpiredError, acquireWorkerLease, renewWorkerLease, SNOWFLAKE_EPOCH, WORKER_LEASE_TTL_MS, WORKER_LEASE_RENEW_MS, WORKER_LEASE_MARGIN_MS } from "./snowflake.js";
+export { AUTOCOMPLETE_DOMAIN, AUTOCOMPLETE_SCOPE, AUTOCOMPLETE_MAX_PREFIX, AUTOCOMPLETE_TOP_K, normalizePrefix, prefixesFor, suggestKey, suggestMember, parseSuggestMember } from "./autocomplete.js";
+export { runDispatcherOnce } from "./dispatcher.js";
+export type { DispatcherHandles, DispatchCounts } from "./dispatcher.js";
