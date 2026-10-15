@@ -160,7 +160,7 @@ export default function MemberPerformance({ params }: { params: Promise<{ employ
               <Button type="submit" className="w-full">Submit review</Button>
             </div>
           </form>
-          {notice && <p className="mt-3 text-sm font-medium text-babu">{notice}</p>}
+          {notice && <p className="mt-3 text-sm font-medium text-rausch-dark">{notice}</p>}
           {error && (
             <p role="alert" className="mt-3 text-sm font-medium text-rausch-dark">
               {error}

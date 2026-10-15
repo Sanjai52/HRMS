@@ -9,6 +9,8 @@ import { leaveRouter } from "./routes/leave.js";
 import { payrollRouter } from "./routes/payroll.js";
 import { jobsRouter, shortRouter, publicRouter } from "./routes/jobs.js";
 import { applicationsRouter } from "./routes/applications.js";
+import { reportsRouter } from "./routes/reports.js";
+import { performanceRouter } from "./routes/performance.js";
 import { sourcingRouter } from "./routes/sourcing.js";
 import { notificationsRouter } from "./routes/notifications.js";
 import { healthRouter } from "./routes/health.js";
@@ -16,6 +18,7 @@ import { adminRouter } from "./routes/admin.js";
 import { systemRouter } from "./routes/system.js";
 import { searchRouter } from "./routes/search.js";
 import { initIds } from "./ids.js";
+import { registerProcess } from "./registry.js";
 import { metricsMiddleware, metricsRouter } from "./routes/metrics.js";
 
 const app = express();
@@ -35,6 +38,8 @@ app.use("/api/v1/leave", leaveRouter);
 app.use("/api/v1/payroll", payrollRouter);
 app.use("/api/v1/jobs", jobsRouter);
 app.use("/api/v1/recruitment", applicationsRouter);
+app.use("/api/v1/reports", reportsRouter);
+app.use("/api/v1/performance", performanceRouter);
 app.use("/api/v1/recruitment/sourcing", sourcingRouter);
 app.use("/api/v1", shortRouter);
 app.use(publicRouter);
@@ -54,6 +59,9 @@ app.use((err: unknown, _req: express.Request, res: express.Response, _next: expr
 const port = Number(process.env.API_PORT ?? 4000);
 initIds(`api:${port}:${process.pid}`).catch((e) => {
   console.error("worker-id lease unavailable at startup:", (e as Error).message);
+});
+registerProcess("API", `api:${port}:${process.pid}`).catch((e) => {
+  console.error("process registry unavailable at startup:", (e as Error).message);
 });
 app.listen(port, () => {
   console.log(`api listening on :${port}`);
