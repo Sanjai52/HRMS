@@ -1,0 +1,11 @@
+{
+ "keys": 20000,
+ "ringRemapPct": 24.9,
+ "moduloRemapPct": 74.5,
+ "ringOwnersAfterAdd": {
+  "shard-4": 4976,
+  "shard-2": 4289,
+  "shard-1": 5830,
+  "shard-3": 4905
+ }
+}

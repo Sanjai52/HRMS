@@ -1,0 +1,20 @@
+{
+ "baselineIndexedCatalog": {
+  "count": 60,
+  "p50": 25.08,
+  "p95": 32.4,
+  "sources": [
+   "catalog"
+  ],
+  "avgResults": 1.3
+ },
+ "redisPrefixCache": {
+  "count": 60,
+  "p50": 25.01,
+  "p95": 26.69,
+  "sources": [
+   "catalog"
+  ],
+  "avgResults": 1.3
+ }
+}
