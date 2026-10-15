@@ -16,6 +16,8 @@ Candidate tables are declared separately and are NOT part of the employee migrat
 | notifications | employee | employee_id | bucket_id | 5 | notification_id,employee_id,read_at | no |
 | salary_structures | employee | employee_id | bucket_id | 6 | employee_id,basic_paise,allowances_paise | no |
 | payroll_records | employee | employee_id | bucket_id | 7 | record_id,employee_id,period,net_paise | no |
+| goals | employee | employee_id | bucket_id | 8 | goal_id,employee_id,cycle_id,status | no |
+| reviews | employee | employee_id | bucket_id | 9 | review_id,employee_id,cycle_id,status | no |
 
 ## Candidate domain (routing map: candidate active version, pinned shards 1–3 in v1)
 
