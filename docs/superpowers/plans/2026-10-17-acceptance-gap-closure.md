@@ -10,6 +10,20 @@
 
 **Spec:** `PRD.md` v2.5 (sections cited per task), `docs/decisions.md` D-001..D-008, `docs/shard-owned-tables.md`, `docs/experiments/00-method.md`. This plan **supersedes** `docs/superpowers/plans/2026-10-15-remaining-phases-8-11.md` Tasks 4–5 (its Tasks 1–3 are already committed).
 
+## Execution Roadmap v2 — demo-first waves (rewritten 2026-10-17)
+
+User direction: land the **system-design concepts and demo-critical product first**, execute in **lumped rounds of 3–5 tasks per subagent dispatch** (fewer sessions, fewer rate-limit stalls), **no per-task reviews**, and hold **one large verification pass at the very end**. Task contents below are unchanged — only the sequencing and batching change. Minor findings and polish are explicitly deferred to the final pass.
+
+| Round | Tasks | Theme | Exit gate |
+|---|---|---|---|
+| R1 (running) | 3 + 4 | Write-path integrity: catalog write-gate coverage + shard write fences | tests green, 2 commits |
+| J2 (background) | 5 + 6 + 7 + 8 + 9 + 11 | Runtime design core + routing/degradation: shard read helper / pool guard / timeouts / error mapping, registry write deadline, `KvStore`, smoke-failure map rollback + stale-writer tests, candidate-map seeding + `loadActiveMap` domain fix, partial-result meta | tests green, per-task commits |
+| J3 (background) | 10 + 12 + 13 + 14 + 15 + 16 | Product + identity/audit: password recovery, audit completeness, admin users/roles, announcements + prefs, attendance reports/corrections, manager access + activity endpoint | tests green, per-task commits |
+| J4 (background) | 17 + 18 + 19 | Edge & observability: web completion, NGINX replicas + trust proxy + limiter hardening, worker metrics + exporters + Grafana | tests green, per-task commits |
+| J5 (final, controller) | 20 + 21 + 22 | Evidence + docs + ONE verification pass: scenario runs C–K, status/decisions/README, full CI + e2e, ONE whole-branch review, ONE fix wave | final report |
+
+Notes: jobs are chained back-to-back by the controller, **never dispatched simultaneously** — one shared working tree, one git index, one live stack; concurrent implementers would corrupt each other (overlapping route files, shared gate/migration test state). If a merged job dies mid-way (context/rate limit), it resumes from the last committed task. R2–R4/R2–J2 are the hard dependency chain for the demo's system-design story (scenario evidence in J5 asserts their behavior). Feature tasks may be trimmed for a first demo without blocking J4/J5, but the plan keeps them. No task review is dispatched inside J2–J4; each implementer runs its own tests, and defects found later are fixed in J5's single fix wave.
+
 ## Global Constraints
 
 - Node `>=22`; run workspace scripts via `npm --workspace`. Migrations are `NNN_name.sql` in one global increasing sequence, immutable once executed; re-run `node infrastructure/postgres/runner.mjs` after adding any.
