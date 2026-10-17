@@ -70,14 +70,14 @@ employeesRouter.patch("/me", requireAuth, async (req: AuthedRequest, res) => {
   }
   try {
     const updated = await withFencedWrite(pool, async (c) => {
-      const r = await c.query("UPDATE employees SET name = $2, version = version + 1, updated_at = now() WHERE employee_id = $1 AND version = $3 RETURNING employee_id, bucket_id, name, email, version", [employeeId, name.trim(), version]);
+      const r = await c.query("UPDATE employees SET name = $2, version = version + 1, updated_at = now() WHERE employee_id = $1 AND version = $3 RETURNING employee_id, bucket_id, name, email, department, designation, version", [employeeId, name.trim(), version]);
       if (r.rows.length === 0) return null;
-      const row = r.rows[0] as { employee_id: string; bucket_id: number; name: string; email: string; version: number };
+      const row = r.rows[0] as { employee_id: string; bucket_id: number; name: string; email: string; department: string; designation: string; version: number };
       await c.query("INSERT INTO outbox_events (event_id, employee_id, bucket_id, type, payload, version) VALUES ($1,$2,$3,'EMPLOYEE_UPDATED',$4,$5)", [
         eventId,
         row.employee_id,
         row.bucket_id,
-        JSON.stringify({ name: row.name, email: row.email }),
+        JSON.stringify({ name: row.name, email: row.email, department: row.department, designation: row.designation }),
         row.version,
       ]);
       return row;

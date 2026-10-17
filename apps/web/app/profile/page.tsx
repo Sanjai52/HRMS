@@ -73,8 +73,13 @@ export default function ProfilePage() {
                 setError("");
                 setNotice("");
                 try {
-                  const data = await authed<Me>("/api/v1/employees/me", undefined, { method: "PATCH", body: JSON.stringify({ name, version: me.version }) });
-                  setMe(data);
+                  const data = await authed<{ name: string; version: number }>("/api/v1/employees/me", undefined, { method: "PATCH", body: JSON.stringify({ name, version: me.version }) });
+                  // PATCH returns shard-row fields; the directory read model is projected
+                  // asynchronously by the dispatcher. Merge the authoritative name/version
+                  // instead of replacing the read model so department/designation/status
+                  // survive the save.
+                  setMe((prev) => (prev ? { ...prev, name: data.name, version: data.version } : prev));
+                  setName(data.name);
                   setNotice("Profile updated.");
                 } catch (err) {
                   setError((err as Error).message);

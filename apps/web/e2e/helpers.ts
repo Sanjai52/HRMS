@@ -1,6 +1,7 @@
 import { APIRequestContext, Page, expect } from "@playwright/test";
 
 export const API = process.env.API_BASE ?? "http://localhost:4000";
+export const PORTAL = process.env.PORTAL_BASE ?? "http://localhost:4100";
 export const email = (n: string) => `${n}${Date.now()}@hrms.local`;
 
 export async function apiLogin(request: APIRequestContext, em: string, pw: string): Promise<string> {

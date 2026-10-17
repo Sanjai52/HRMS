@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { API, email, hrToken, inviteAcceptOnboard, uiLogin } from "./helpers";
+import { API, PORTAL, email, hrToken, inviteAcceptOnboard, uiLogin } from "./helpers";
 
 test.describe.serial("HRMS end to end", () => {
   test("landing is a product page, not a prototype", async ({ page }) => {
@@ -71,6 +71,45 @@ test.describe.serial("HRMS end to end", () => {
     expect(person.employeeId).toBeTruthy();
   });
 
+  test("profile save keeps header, department, and status intact", async ({ page, request }) => {
+    const hr = await hrToken(request);
+    const em = email("e2eprofile");
+    const person = await inviteAcceptOnboard(request, hr, "E2E Profile", em);
+
+    // Real department/designation make the post-save field survival observable.
+    const detail = await request.get(`${API}/api/v1/employees/${person.employeeId}`, { headers: { authorization: `Bearer ${hr}` } });
+    const version = ((await detail.json()) as { data: { version: number } }).data.version;
+    const patch = await request.patch(`${API}/api/v1/employees/${person.employeeId}`, {
+      headers: { authorization: `Bearer ${hr}` },
+      data: { department: "Engineering", designation: "QA Engineer", version },
+    });
+    expect(patch.status()).toBe(200);
+    await request.post(`${API}/system/test/run-dispatcher`);
+
+    await uiLogin(page, em, "PersonPass1!");
+    await page.goto("/profile");
+    await expect(page.getByText("QA Engineer · Engineering")).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText("ACTIVE")).toBeVisible();
+
+    await page.getByLabel("Full name").fill("E2E Profile Renamed");
+    await page.getByRole("button", { name: /save changes/i }).click();
+    await expect(page.getByText("Profile updated.")).toBeVisible({ timeout: 15000 });
+
+    // The regression: PATCH /me returns only name/version, so read-model fields
+    // (designation · department, status pill) must survive the save without a reload.
+    await expect(page.getByText("E2E Profile Renamed")).toBeVisible();
+    await expect(page.getByText("QA Engineer · Engineering")).toBeVisible();
+    await expect(page.getByText("ACTIVE")).toBeVisible();
+
+    // Round trip: once the dispatcher projects the update, a reload shows the new name.
+    await expect(async () => {
+      await page.reload();
+      await expect(page.getByText("E2E Profile Renamed")).toBeVisible({ timeout: 3000 });
+    }).toPass({ timeout: 20000 });
+    await expect(page.getByText("QA Engineer · Engineering")).toBeVisible();
+    await expect(page.getByText("ACTIVE")).toBeVisible();
+  });
+
   test("leave flows from apply to approval", async ({ page, request }) => {
     const hr = await hrToken(request);
     const mgr = await inviteAcceptOnboard(request, hr, "E2E Mgr", email("e2emgr"), "MANAGER");
@@ -125,12 +164,52 @@ test.describe.serial("HRMS end to end", () => {
     await expect(page.getByRole("heading", { name: /track your application/i })).toBeVisible({ timeout: 15000 });
   });
 
-  test("sourcing run completes and pool grows", async ({ page }) => {
+  test("sourcing run completes and pool grows", async ({ page, request }) => {
+    const hr = await hrToken(request);
+    // The fixture portal is fully deduped after the first crawl, so seed a fresh
+    // profile to prove this run actually discovers and imports (the test name
+    // promises growth; discovered/imported > 0 are meaningless on a warm pool).
+    const marker = `e2e-marker-${Date.now()}`;
+    const seeded = await request.post(`${PORTAL}/test/seed`, {
+      data: { name: `E2E Portal ${Date.now()}`, email: `${marker}@example.com`, skills: [marker], exp: 3 },
+    });
+    expect(seeded.status()).toBe(201);
+
     await uiLogin(page, "hr@hrms.local", "ChangeMe123!");
     await page.goto("/hr/recruitment/sourcing");
-    await page.getByLabel("Target role").fill("Backend Engineer");
+    const role = `E2E Sourcing ${Date.now()}`;
+    await page.getByLabel("Target role").fill(role);
+    await page.getByLabel("Skills (comma separated, optional)").fill(marker);
     await page.getByRole("button", { name: /start sourcing/i }).click();
-    await expect(page.getByText(/sourcing|runs/i).first()).toBeVisible({ timeout: 15000 });
+
+    // Poll the runs API until this run reaches a terminal state: a 500 on the
+    // start POST or a dead crawler never produces a run row here at all.
+    await expect
+      .poll(
+        async () => {
+          const res = await request.get(`${API}/api/v1/recruitment/sourcing/runs`, { headers: { authorization: `Bearer ${hr}` } });
+          const body = (await res.json()) as { data: Array<{ role: string; status: string }> };
+          return body.data.find((r) => r.role === role)?.status ?? "NOT_FOUND";
+        },
+        { timeout: 60000, intervals: [1000], message: "sourcing run should reach a terminal state" }
+      )
+      .toMatch(/COMPLETED|PARTIAL_FAILED|FAILED/);
+
+    const res = await request.get(`${API}/api/v1/recruitment/sourcing/runs`, { headers: { authorization: `Bearer ${hr}` } });
+    const body = (await res.json()) as { data: Array<{ role: string; status: string; pages: number; discovered: number; imported: number }> };
+    const run = body.data.find((r) => r.role === role);
+    expect(run).toBeDefined();
+    expect(run!.status).toBe("COMPLETED");
+    expect(run!.pages).toBeGreaterThan(0);
+    expect(run!.discovered).toBeGreaterThan(0);
+    expect(run!.imported).toBeGreaterThan(0);
+
+    // The finished run and its live counts render in the UI.
+    await page.reload();
+    const row = page.getByRole("link", { name: new RegExp(role) });
+    await expect(row).toBeVisible({ timeout: 15000 });
+    await expect(row).toContainText("COMPLETED");
+    await expect(row).toContainText(`${run!.imported} imported`);
   });
 
   test("performance cycle to released review", async ({ page, request }) => {
