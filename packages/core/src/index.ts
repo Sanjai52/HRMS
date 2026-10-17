@@ -22,6 +22,7 @@ export type { ChunkDb } from "./payroll-chunk.js";
 export { CANDIDATE_SHARDS, STAGES, TERMINAL, canTransition, slugify, randomCode, isAllowedDestination, loadMapByDomain, buildCandidateMapV1 } from "./recruitment.js";
 export { createIdIssuer } from "./leases.js";
 export type { IdIssuer } from "./leases.js";
+export { registrationValid } from "./registration.js";
 export { computeMap, diffMaps, MIGRATION_MANIFEST } from "./migration.js";
 export type { BucketMove } from "./migration.js";
 export { HttpCrawler, parseListingIds, hasNextPage, parseProfile, normalizeEmail, fingerprint } from "./crawler.js";

@@ -5,9 +5,9 @@ import {
   loadActiveMap,
   resolveShard,
   stableEmployeeBucket,
-  withFencedWrite,
   GateClosedError,
 } from "@hrms/core";
+import { fencedWrite } from "../fenced.js";
 import { catalogPool } from "../db/pools.js";
 import { ownedShardPools, poolFor } from "../db/shards.js";
 import { assertCatalogOpen, CatalogGateError, gateError } from "../catalog-gate.js";
@@ -70,7 +70,7 @@ employeesRouter.patch("/me", requireAuth, async (req: AuthedRequest, res) => {
     throw e;
   }
   try {
-    const updated = await withFencedWrite(pool, async (c) => {
+    const updated = await fencedWrite(pool, async (c) => {
       const r = await c.query("UPDATE employees SET name = $2, version = version + 1, updated_at = now() WHERE employee_id = $1 AND version = $3 RETURNING employee_id, bucket_id, name, email, department, designation, version", [employeeId, name.trim(), version]);
       if (r.rows.length === 0) return null;
       const row = r.rows[0] as { employee_id: string; bucket_id: number; name: string; email: string; department: string; designation: string; version: number };
@@ -152,7 +152,7 @@ employeesRouter.post("/onboard", requireAuth, requireRoles("HR", "ADMIN"), async
     if (!pool) throw new Error(`unknown-shard:${shard}`);
     const displayId = `EMP-${String(Date.now()).slice(-6)}`;
     try {
-      await withFencedWrite(pool, async (c) => {
+      await fencedWrite(pool, async (c) => {
         await c.query(
           "INSERT INTO employees (employee_id, bucket_id, display_id, email, name, department, designation, status) VALUES ($1,$2,$3,$4,$5,'','', 'ACTIVE')",
           [employeeId, bucket, displayId, row.email_norm, row.name || row.email]
@@ -289,7 +289,7 @@ employeesRouter.patch("/:id", requireAuth, requireRoles("HR", "ADMIN"), async (r
     return;
   }
   try {
-    const updated = await withFencedWrite(pool, async (c) => {
+    const updated = await fencedWrite(pool, async (c) => {
       if (managerId !== undefined) {
         if (managerId === req.params.id) {
           throw new Error("SELF_MANAGER");
@@ -379,7 +379,7 @@ employeesRouter.post("/:id/deactivate", requireAuth, requireRoles("HR", "ADMIN")
   if (u.rows.length > 0) await destroyUserSessions(u.rows[0].user_id as string);
   const { map: reassignMap } = await loadActiveMap(catalogPool);
   try {
-    const row = await withFencedWrite(pool, async (c) => {
+    const row = await fencedWrite(pool, async (c) => {
       const r = await c.query("UPDATE employees SET status = 'INACTIVE', version = version + 1, updated_at = now() WHERE employee_id = $1 AND status <> 'INACTIVE' RETURNING employee_id, bucket_id, name, email, version", [req.params.id]);
       if (r.rows.length === 0) return null;
       const emp = r.rows[0] as { employee_id: string; bucket_id: number; name: string; email: string; version: number };
@@ -405,7 +405,7 @@ employeesRouter.post("/:id/deactivate", requireAuth, requireRoles("HR", "ADMIN")
     }
     for (const { shard: reShard, pool: rePool } of ownedShardPools()) {
       const owned = [...reassignMap].filter(([, s]) => s === reShard).map(([b]) => b);
-      await withFencedWrite(rePool, async (c) => {
+      await fencedWrite(rePool, async (c) => {
         await c.query(
           "UPDATE leave_requests SET status = 'PENDING_HR', version = version + 1 WHERE status = 'PENDING_MANAGER' AND bucket_id = ANY($2) AND employee_id IN (SELECT employee_id FROM employees WHERE manager_id = $1)",
           [req.params.id, owned]

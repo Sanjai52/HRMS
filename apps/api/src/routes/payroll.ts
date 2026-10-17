@@ -3,9 +3,9 @@ import {
   errorEnvelope,
   loadActiveMap,
   resolveShard,
-  withFencedWrite,
   GateClosedError,
 } from "@hrms/core";
+import { fencedWrite } from "../fenced.js";
 import { nextEventId } from "../ids.js";
 import { LeaseExpiredError } from "@hrms/core";
 import { catalogPool } from "../db/pools.js";
@@ -49,7 +49,7 @@ payrollRouter.post("/structures", requireAuth, requireRoles("HR", "ADMIN"), asyn
     return;
   }
   try {
-    await withFencedWrite(pool, async (c) => {
+    await fencedWrite(pool, async (c) => {
       const bucket = (await c.query("SELECT bucket_id FROM employees WHERE employee_id = $1", [employeeId])).rows[0].bucket_id as number;
       await c.query(
         "INSERT INTO salary_structures (employee_id, bucket_id, basic_paise, allowances_paise, other_deductions_paise, pf_pct, tax_pct, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,now()) ON CONFLICT (employee_id) DO UPDATE SET basic_paise = EXCLUDED.basic_paise, allowances_paise = EXCLUDED.allowances_paise, other_deductions_paise = EXCLUDED.other_deductions_paise, pf_pct = EXCLUDED.pf_pct, tax_pct = EXCLUDED.tax_pct, updated_at = now()",

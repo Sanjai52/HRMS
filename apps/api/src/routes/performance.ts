@@ -2,9 +2,9 @@ import { Router } from "express";
 import {
   errorEnvelope,
   stableEmployeeBucket,
-  withFencedWrite,
   GateClosedError,
 } from "@hrms/core";
+import { fencedWrite } from "../fenced.js";
 import { nextEventId } from "../ids.js";
 import { LeaseExpiredError } from "@hrms/core";
 import { catalogPool } from "../db/pools.js";
@@ -148,7 +148,7 @@ performanceRouter.post("/goals", requireAuth, requireRoles("MANAGER", "HR", "ADM
   }
   const bucket = stableEmployeeBucket(employeeId);
   try {
-    await withFencedWrite(t.pool, async (c) => {
+    await fencedWrite(t.pool, async (c) => {
       await c.query(
         "INSERT INTO goals (goal_id, employee_id, bucket_id, cycle_id, title, description, target) VALUES ($1,$2,$3,$4,$5,$6,$7)",
         [id, employeeId, bucket, cycleId, title.trim(), typeof description === "string" ? description.slice(0, 1000) : "", typeof target === "string" ? target.slice(0, 500) : ""]
@@ -193,7 +193,7 @@ performanceRouter.patch("/goals/:id", requireAuth, async (req: AuthedRequest, re
     return;
   }
   try {
-    await withFencedWrite(found.pool, async (c) => {
+    await fencedWrite(found.pool, async (c) => {
       await c.query("UPDATE goals SET progress = COALESCE($2, progress), status = COALESCE($3, status), updated_at = now() WHERE goal_id = $1", [
         req.params.id,
         progress ?? null,
@@ -238,7 +238,7 @@ performanceRouter.post("/reviews", requireAuth, requireRoles("MANAGER", "HR", "A
   }
   const bucket = stableEmployeeBucket(employeeId);
   try {
-    await withFencedWrite(t.pool, async (c) => {
+    await fencedWrite(t.pool, async (c) => {
       await c.query(
         "INSERT INTO reviews (review_id, employee_id, bucket_id, cycle_id, reviewer_id, rating, feedback, strengths, improvements) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
         [id, employeeId, bucket, cycleId, me ?? "", (rating as number) ?? null, str(feedback), str(strengths), str(improvements)]
@@ -262,7 +262,7 @@ performanceRouter.post("/reviews/:id/submit", requireAuth, requireRoles("MANAGER
   const owned = await ownedBuckets();
   for (const { shard, pool } of ownedShardPools()) {
     try {
-      const r = await withFencedWrite(pool, async (c) => {
+      const r = await fencedWrite(pool, async (c) => {
         return c.query("UPDATE reviews SET status = 'SUBMITTED', submitted_at = now() WHERE review_id = $1 AND status = 'DRAFT' AND bucket_id = ANY($2) RETURNING review_id", [req.params.id, owned[shard] ?? []]);
       });
       if (r.rows.length > 0) {
@@ -284,7 +284,7 @@ performanceRouter.post("/reviews/:id/release", requireAuth, requireRoles("HR", "
   const owned = await ownedBuckets();
   for (const { shard, pool } of ownedShardPools()) {
     try {
-      const out = await withFencedWrite(pool, async (c) => {
+      const out = await fencedWrite(pool, async (c) => {
         const r = await c.query("SELECT employee_id, bucket_id FROM reviews WHERE review_id = $1 AND status = 'SUBMITTED' AND bucket_id = ANY($2)", [req.params.id, owned[shard] ?? []]);
         if (r.rows.length === 0) return null;
         await c.query("UPDATE reviews SET status = 'RELEASED' WHERE review_id = $1", [req.params.id]);

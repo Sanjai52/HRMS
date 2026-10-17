@@ -6,9 +6,9 @@ import {
   loadMapByDomain,
   stableEmployeeBucket,
   canTransition,
-  withFencedWrite,
   GateClosedError,
 } from "@hrms/core";
+import { fencedWrite } from "../fenced.js";
 import { nextEventId } from "../ids.js";
 import { LeaseExpiredError } from "@hrms/core";
 import { catalogPool } from "../db/pools.js";
@@ -128,7 +128,7 @@ applicationsRouter.post(
       }
       const reusedId = (existing.rows[0] as { application_id: string }).application_id;
       try {
-        await withFencedWrite(route.pool, async (c) => {
+        await fencedWrite(route.pool, async (c) => {
           await c.query("UPDATE applications SET stage = 'APPLIED', version = version + 1, updated_at = now() WHERE application_id = $1", [reusedId]);
         });
       } catch (e) {
@@ -142,7 +142,7 @@ applicationsRouter.post(
       return;
     }
     try {
-      await withFencedWrite(route.pool, async (c) => {
+      await fencedWrite(route.pool, async (c) => {
         await c.query(
           "INSERT INTO candidates (candidate_id, candidate_bucket_id, name, email, phone, skills, experience_years, resume_key, source) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'direct') ON CONFLICT (candidate_id) DO UPDATE SET name = EXCLUDED.name, phone = EXCLUDED.phone, skills = EXCLUDED.skills, experience_years = EXCLUDED.experience_years",
           [candidateId, route.bucket, name.trim(), norm, typeof phone === "string" ? phone.slice(0, 30) : "", skillList, expYears, resumeKey]
@@ -288,7 +288,7 @@ applicationsRouter.post("/applications/:id/stage", requireAuth, requireRoles("HR
     throw e;
   }
   try {
-    const updated = await withFencedWrite(route.pool, async (c) => {
+    const updated = await fencedWrite(route.pool, async (c) => {
       const cur = await c.query("SELECT stage, version FROM applications WHERE application_id = $1", [req.params.id]);
       if (cur.rows.length === 0) return null;
       const from = (cur.rows[0] as { stage: string }).stage;
@@ -356,7 +356,7 @@ applicationsRouter.post("/applications/:id/interviews", requireAuth, requireRole
     throw e;
   }
   try {
-    await withFencedWrite(route.pool, async (c) => {
+    await fencedWrite(route.pool, async (c) => {
       await c.query("INSERT INTO interviews (interview_id, application_id, candidate_bucket_id, round, interviewer, scheduled_at) VALUES ($1,$2,$3,$4,$5,$6)", [
         id,
         req.params.id,
@@ -388,7 +388,7 @@ applicationsRouter.post("/applications/:id/interviews/:interviewId", requireAuth
     return;
   }
   try {
-    await withFencedWrite(route.pool, async (c) => {
+    await fencedWrite(route.pool, async (c) => {
       await c.query("UPDATE interviews SET status = COALESCE($3, status), feedback = COALESCE($4, feedback) WHERE interview_id = $1 AND application_id = $2", [
         req.params.interviewId,
         req.params.id,
@@ -428,7 +428,7 @@ applicationsRouter.post("/applications/:id/assessments", requireAuth, requireRol
     throw e;
   }
   try {
-    await withFencedWrite(route.pool, async (c) => {
+    await fencedWrite(route.pool, async (c) => {
       await c.query("INSERT INTO assessments (assessment_id, application_id, candidate_bucket_id, type, score, status, completed_at) VALUES ($1,$2,$3,$4,$5,'COMPLETED',now())", [
         id,
         req.params.id,
@@ -492,7 +492,7 @@ applicationsRouter.post("/applications/:id/convert", requireAuth, requireRoles("
     client.release();
   }
   try {
-    await withFencedWrite(route.pool, async (c) => {
+    await fencedWrite(route.pool, async (c) => {
       await c.query("UPDATE applications SET converted_invitation_id = $2 WHERE application_id = $1", [req.params.id, invitationId]);
     });
   } catch (e) {

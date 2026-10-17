@@ -206,6 +206,15 @@ describe("Phase 10b shard fence coverage", () => {
         if (result !== `${check.name}->503 GATE_CLOSED`) failures.push(`expected 503 GATE_CLOSED, got ${result}`);
       }
 
+      // The 503 envelope text is unchanged with the registry deadline in front
+      // of the fence: registration expiry surfaces as GATE_CLOSED "retry shortly".
+      const envelopeRes = await post(`/api/v1/notifications/${notification!.notification_id}/read`, e.token)();
+      expect(envelopeRes.status).toBe(503);
+      expect(await envelopeRes.json()).toEqual({
+        success: false,
+        error: { code: "GATE_CLOSED", message: "Writes are paused for maintenance. Try again shortly." },
+      });
+
       // The deactivate leave-reassignment site is only reached when the manager's own shard is open.
       await pools[managerShard].query("UPDATE shard_write_gate SET state = 'OPEN' WHERE id = 1");
       const deact = await resultOf("employees.deactivate-leave-reassignment", post(`/api/v1/employees/${m.employeeId}/deactivate`, hr));

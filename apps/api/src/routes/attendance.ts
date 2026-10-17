@@ -1,11 +1,11 @@
 import { Router } from "express";
 import {
   errorEnvelope,
-  withFencedWrite,
   GateClosedError,
   workdayOf,
   isLate,
 } from "@hrms/core";
+import { fencedWrite } from "../fenced.js";
 
 export const attendanceRouter = Router();
 import { nextEventId } from "../ids.js";
@@ -38,7 +38,7 @@ attendanceRouter.post("/check-in", requireAuth, async (req: AuthedRequest, res) 
   const now = new Date();
   const day = workdayOf(now);
   try {
-    const row = await withFencedWrite(target.pool, async (c) => {
+    const row = await fencedWrite(target.pool, async (c) => {
       const existing = await c.query("SELECT attendance_id, check_in, check_out, status FROM attendance WHERE employee_id = $1 AND workday = $2", [employeeId, day]);
       if (existing.rows.length > 0) return { ...(existing.rows[0] as object), duplicate: true };
       const status = isLate(now) ? "LATE" : "PRESENT";
@@ -70,7 +70,7 @@ attendanceRouter.post("/check-out", requireAuth, async (req: AuthedRequest, res)
     return;
   }
   try {
-    const row = await withFencedWrite(target.pool, async (c) => {
+    const row = await fencedWrite(target.pool, async (c) => {
       const r = await c.query("SELECT attendance_id, check_in, check_out FROM attendance WHERE employee_id = $1 AND workday = $2", [employeeId, workdayOf(new Date())]);
       if (r.rows.length === 0 || !(r.rows[0] as { check_in: string }).check_in) {
         return null;

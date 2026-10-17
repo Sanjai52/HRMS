@@ -19,28 +19,47 @@ export async function runPayrollChunk(
   const scheduled = countWorkdays(start, end, holidays);
   const people = await db.shard.query("SELECT employee_id, bucket_id FROM employees WHERE status = 'ACTIVE' LIMIT 500");
   await db.catalog.query("UPDATE payroll_batches SET status = 'RUNNING', total = total + $2 WHERE batch_id = $1", [batchId, people.rows.length]);
+  const ids = people.rows.map((r) => r.employee_id as string);
+
+  type StructureRow = { employee_id: string; basic_paise: number; allowances_paise: number; other_deductions_paise: number; pf_pct: string; tax_pct: string };
+  const structures = new Map<string, StructureRow>();
+  const attendance = new Map<string, number>();
+  const leavesByEmployee = new Map<string, Array<{ start_date: Date; end_date: Date }>>();
+  if (ids.length > 0) {
+    const s = await db.shard.query(
+      "SELECT employee_id, basic_paise, allowances_paise, other_deductions_paise, pf_pct, tax_pct FROM salary_structures WHERE employee_id = ANY($1::uuid[])",
+      [ids]
+    );
+    for (const row of s.rows as unknown as StructureRow[]) structures.set(row.employee_id, row);
+    const att = await db.shard.query(
+      "SELECT employee_id, COUNT(*) AS c FROM attendance WHERE employee_id = ANY($1::uuid[]) AND workday >= $2::date AND workday <= $3::date AND status IN ('PRESENT','LATE') GROUP BY employee_id",
+      [ids, start, end]
+    );
+    for (const row of att.rows as unknown as Array<{ employee_id: string; c: string }>) attendance.set(row.employee_id, Number(row.c));
+    const lv = await db.shard.query(
+      "SELECT employee_id, start_date, end_date FROM leave_requests WHERE employee_id = ANY($1::uuid[]) AND status = 'APPROVED' AND start_date <= $3 AND end_date >= $2",
+      [ids, start, end]
+    );
+    for (const row of lv.rows as unknown as Array<{ employee_id: string; start_date: Date; end_date: Date }>) {
+      const list = leavesByEmployee.get(row.employee_id) ?? [];
+      list.push({ start_date: row.start_date, end_date: row.end_date });
+      leavesByEmployee.set(row.employee_id, list);
+    }
+  }
+
   let processed = 0;
   let failed = 0;
   let skipped = 0;
   for (const person of people.rows as Array<{ employee_id: string; bucket_id: number }>) {
     try {
-      const s = await db.shard.query("SELECT * FROM salary_structures WHERE employee_id = $1", [person.employee_id]);
-      if (s.rows.length === 0) {
+      const st = structures.get(person.employee_id);
+      if (!st) {
         skipped += 1;
         continue;
       }
-      const st = s.rows[0] as unknown as { basic_paise: number; allowances_paise: number; other_deductions_paise: number; pf_pct: string; tax_pct: string };
-      const att = await db.shard.query(
-        "SELECT COUNT(*) AS c FROM attendance WHERE employee_id = $1 AND workday >= $2::date AND workday <= $3::date AND status IN ('PRESENT','LATE')",
-        [person.employee_id, start, end]
-      );
-      const present = Number((att.rows[0] as unknown as { c: string }).c);
-      const leaves = await db.shard.query(
-        "SELECT start_date, end_date FROM leave_requests WHERE employee_id = $1 AND status = 'APPROVED' AND start_date <= $3 AND end_date >= $2",
-        [person.employee_id, start, end]
-      );
+      const present = attendance.get(person.employee_id) ?? 0;
       let paidLeave = 0;
-      for (const l of leaves.rows as unknown as Array<{ start_date: Date; end_date: Date }>) {
+      for (const l of leavesByEmployee.get(person.employee_id) ?? []) {
         paidLeave += overlapWorkdays(l.start_date.toISOString().slice(0, 10), l.end_date.toISOString().slice(0, 10), start, end, holidays);
       }
       const paid = Math.min(scheduled, present + paidLeave);

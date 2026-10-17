@@ -1,5 +1,6 @@
 import { Router } from "express";
-import { errorEnvelope, withFencedWrite, GateClosedError } from "@hrms/core";
+import { errorEnvelope, GateClosedError } from "@hrms/core";
+import { fencedWrite } from "../fenced.js";
 import { requireAuth, type AuthedRequest } from "../middleware/auth.js";
 import { selfEmployeeId, shardFor } from "../directory/self.js";
 
@@ -51,7 +52,7 @@ notificationsRouter.post("/:id/read", requireAuth, async (req: AuthedRequest, re
     return;
   }
   try {
-    await withFencedWrite(t.pool, async (c) => {
+    await fencedWrite(t.pool, async (c) => {
       await c.query("UPDATE notifications SET read_at = now() WHERE notification_id = $1 AND employee_id = $2", [req.params.id, me]);
     });
   } catch (e) {

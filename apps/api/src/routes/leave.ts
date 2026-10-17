@@ -2,11 +2,11 @@ import { Router } from "express";
 import {
   errorEnvelope,
   countWorkdays,
-  withFencedWrite,
   GateClosedError,
   loadActiveMap,
   resolveShard,
 } from "@hrms/core";
+import { fencedWrite } from "../fenced.js";
 import { nextEventId } from "../ids.js";
 import { LeaseExpiredError } from "@hrms/core";
 import { catalogPool } from "../db/pools.js";
@@ -106,7 +106,7 @@ leaveRouter.post("/requests", requireAuth, async (req: AuthedRequest, res) => {
   }
   const year = Number(start.slice(0, 4));
   try {
-    const request = await withFencedWrite(t.pool, async (c) => {
+    const request = await fencedWrite(t.pool, async (c) => {
       await c.query(
         "INSERT INTO leave_balances (employee_id, bucket_id, leave_type, year, total_days) VALUES ($1, (SELECT bucket_id FROM employees WHERE employee_id = $1), $2, $3, $4) ON CONFLICT DO NOTHING",
         [employeeId, type, year, total]
@@ -266,7 +266,7 @@ async function decide(
   }
   try {
     const next = to === "APPROVED" && row.status === "PENDING_MANAGER" && !isHr ? "PENDING_HR" : to;
-    await withFencedWrite(found.pool, async (c) => {
+    await fencedWrite(found.pool, async (c) => {
       const current = await c.query("SELECT status, version FROM leave_requests WHERE request_id = $1", [req.params.id]);
       if (current.rows.length === 0 || (current.rows[0] as LeaveRow).version !== version) throw new Error("VERSION_CONFLICT");
       await c.query("UPDATE leave_requests SET status = $2, version = version + 1, decided_by = $3, decided_at = now() WHERE request_id = $1", [
@@ -374,7 +374,7 @@ leaveRouter.post("/requests/:id/cancel", requireAuth, async (req: AuthedRequest,
   }
   const wasApproved = row.status === "APPROVED";
   try {
-    await withFencedWrite(found.pool, async (c) => {
+    await fencedWrite(found.pool, async (c) => {
       await c.query("UPDATE leave_requests SET status = 'CANCELLED', version = version + 1 WHERE request_id = $1", [req.params.id]);
       if (wasApproved) {
         await c.query("UPDATE leave_balances SET used_days = GREATEST(0, used_days - $3) WHERE employee_id = $1 AND leave_type = $2 AND year = $4", [
