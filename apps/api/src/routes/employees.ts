@@ -16,6 +16,7 @@ import { searchLimit } from "../middleware/rate-limit.js";
 import { destroyUserSessions } from "../auth/sessions.js";
 import { nextEventId } from "../ids.js";
 import { LeaseExpiredError } from "@hrms/core";
+import { selfEmployeeId } from "../directory/self.js";
 
 export const employeesRouter = Router();
 
@@ -250,21 +251,40 @@ employeesRouter.get("/team", requireAuth, requireRoles("MANAGER", "HR", "ADMIN")
   res.json({ success: true, data: out, meta: partialMeta(unavailable) });
 });
 
-async function shardRow(employeeId: string): Promise<{ shard: string; row: Record<string, unknown> } | null> {
+interface EmployeeRow {
+  employee_id: string;
+  bucket_id: number;
+  display_id: string;
+  email: string;
+  name: string;
+  department: string;
+  designation: string;
+  status: string;
+  manager_id: string | null;
+  version: number;
+}
+
+async function shardRow(employeeId: string): Promise<{ shard: string; row: EmployeeRow } | null> {
   const { map } = await loadActiveMap(catalogPool);
   const shard = resolveShard(employeeId, map);
   const pool = poolFor(shard);
   if (!pool) return null;
-  const r = await pool.query("SELECT employee_id, bucket_id, display_id, email, name, department, designation, status, version FROM employees WHERE employee_id = $1", [employeeId]);
+  const r = await pool.query("SELECT employee_id, bucket_id, display_id, email, name, department, designation, status, manager_id, version FROM employees WHERE employee_id = $1", [employeeId]);
   if (r.rows.length === 0) return null;
-  return { shard, row: r.rows[0] as Record<string, unknown> };
+  return { shard, row: r.rows[0] as EmployeeRow };
 }
 
-async function canSee(req: AuthedRequest, emailNorm: string): Promise<boolean> {
+/** HR/ADMIN, the person themselves, or their direct manager may see the record. */
+async function canSee(req: AuthedRequest, row: Pick<EmployeeRow, "email" | "manager_id">): Promise<boolean> {
   const roles = req.roles ?? [];
   if (roles.includes("HR") || roles.includes("ADMIN")) return true;
   const u = await catalogPool.query("SELECT email_norm FROM users WHERE user_id = $1", [req.userId]);
-  return u.rows.length > 0 && (u.rows[0].email_norm as string) === emailNorm;
+  if (u.rows.length > 0 && (u.rows[0].email_norm as string) === row.email) return true;
+  if (row.manager_id) {
+    const me = await selfEmployeeId(req);
+    if (me && me === row.manager_id) return true;
+  }
+  return false;
 }
 
 employeesRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
@@ -273,11 +293,42 @@ employeesRouter.get("/:id", requireAuth, async (req: AuthedRequest, res) => {
     res.status(404).json(errorEnvelope("NOT_FOUND", "Employee not found"));
     return;
   }
-  if (!(await canSee(req, found.row.email as string))) {
+  if (!(await canSee(req, found.row))) {
     res.status(403).json(errorEnvelope("FORBIDDEN", "Insufficient role"));
     return;
   }
   res.json({ success: true, data: found.row });
+});
+
+employeesRouter.get("/:id/activity", requireAuth, async (req: AuthedRequest, res) => {
+  const found = await shardRow(req.params.id);
+  if (!found) {
+    res.status(404).json(errorEnvelope("NOT_FOUND", "Employee not found"));
+    return;
+  }
+  if (!(await canSee(req, found.row))) {
+    res.status(403).json(errorEnvelope("FORBIDDEN", "Insufficient role"));
+    return;
+  }
+  const pool = poolFor(found.shard);
+  if (!pool) {
+    res.status(500).json(errorEnvelope("ROUTING_ERROR", "No shard owns this record"));
+    return;
+  }
+  const [attendance, leave, payroll] = await Promise.all([
+    pool.query("SELECT workday::text AS workday, check_in, check_out, status FROM attendance WHERE employee_id = $1 ORDER BY workday DESC LIMIT 30", [
+      req.params.id,
+    ]),
+    pool.query(
+      "SELECT request_id, leave_type, start_date::text AS start_date, end_date::text AS end_date, workdays, status, version, created_at FROM leave_requests WHERE employee_id = $1 ORDER BY created_at DESC LIMIT 20",
+      [req.params.id]
+    ),
+    pool.query(
+      "SELECT record_id, period, gross_paise, lop_paise, net_paise, scheduled_days, paid_days, created_at FROM payroll_records WHERE employee_id = $1 ORDER BY period DESC LIMIT 12",
+      [req.params.id]
+    ),
+  ]);
+  res.json({ success: true, data: { attendance: attendance.rows, leave: leave.rows, payroll: payroll.rows } });
 });
 
 employeesRouter.patch("/:id", requireAuth, requireRoles("HR", "ADMIN"), async (req: AuthedRequest, res) => {
