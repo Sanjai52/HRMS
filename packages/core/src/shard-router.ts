@@ -37,7 +37,7 @@ export function buildMapV1(members: string[] = [...ACTIVE_SHARDS], v: number = V
 }
 
 export async function loadActiveMap(catalog: Queryable): Promise<{ version: number; map: ActiveMap }> {
-  const v = await catalog.query("SELECT version FROM routing_map_versions WHERE active = TRUE ORDER BY version DESC LIMIT 1");
+  const v = await catalog.query("SELECT version FROM routing_map_versions WHERE domain = 'employee' AND active = TRUE ORDER BY version DESC LIMIT 1");
   if (v.rows.length === 0) throw new Error("no-active-routing-map");
   const version = v.rows[0].version as number;
   const r = await catalog.query("SELECT bucket_id, shard_id FROM routing_map_buckets WHERE version = $1", [version]);

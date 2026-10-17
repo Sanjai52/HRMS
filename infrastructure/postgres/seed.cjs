@@ -1,6 +1,7 @@
 const { Client } = require("pg");
-const { createHash, randomUUID } = require("node:crypto");
+const { createHash } = require("node:crypto");
 const argon2 = require("argon2");
+const { ACTIVE_SHARDS, buildCandidateMapV1, VIRTUAL_NODES } = require("@hrms/core");
 
 const SHARDS = {
   "shard-1": process.env.DATABASE_SHARD_1_URL,
@@ -41,8 +42,8 @@ async function main() {
     { id: "11111111-1111-1111-1111-111111111111", name: "Asha Rao", email: "asha.rao@hrms.local", dept: "Engineering", desig: "Engineer" },
     { id: "22222222-2222-2222-2222-222222222222", name: "Ben Kurian", email: "ben.kurian@hrms.local", dept: "HR", desig: "HR Manager" },
     { id: "123e4567-e89b-12d3-a456-426614174000", name: "Cara Iyer", email: "cara.iyer@hrms.local", dept: "Finance", desig: "Analyst" },
-    { id: randomUUID(), name: "Dev Menon", email: "dev.menon@hrms.local", dept: "Engineering", desig: "Engineer" },
-    { id: randomUUID(), name: "Esha Nair", email: "esha.nair@hrms.local", dept: "Engineering", desig: "Engineer" },
+    { id: "48e5aff9-625e-4f63-87b3-ac2f274e8506", name: "Dev Menon", email: "dev.menon@hrms.local", dept: "Engineering", desig: "Engineer" },
+    { id: "ceb354de-ba57-45be-bbc7-4b29eab399c8", name: "Esha Nair", email: "esha.nair@hrms.local", dept: "Engineering", desig: "Engineer" },
   ];
 
   const pools = {};
@@ -80,6 +81,27 @@ async function main() {
     [hrId, hrEmail, hrEmail.toLowerCase()]
   );
   console.log(`HR bucket=${hrBucket} shard=${hrShard}`);
+
+  // Candidate routing map (recruitment domain) — idempotent: skip when an active candidate map exists.
+  const candActive = await catalog.query("SELECT version FROM routing_map_versions WHERE domain = 'candidate' AND active = TRUE ORDER BY version DESC LIMIT 1");
+  if (candActive.rows.length > 0) {
+    console.log(`candidate map already active: version=${candActive.rows[0].version}`);
+  } else {
+    const maxV = await catalog.query("SELECT COALESCE(MAX(version), 0) AS v FROM routing_map_versions");
+    const candidateVersion = Number(maxV.rows[0].v) + 1;
+    const members = [...ACTIVE_SHARDS].join(",");
+    await catalog.query(
+      "INSERT INTO routing_map_versions (version, members, virtual_nodes, active, domain) VALUES ($1, $2, $3, TRUE, 'candidate') ON CONFLICT (version) DO NOTHING",
+      [candidateVersion, members, VIRTUAL_NODES]
+    );
+    for (const row of buildCandidateMapV1([...ACTIVE_SHARDS])) {
+      await catalog.query(
+        "INSERT INTO routing_map_buckets (version, bucket_id, shard_id) VALUES ($1, $2, $3) ON CONFLICT (version, bucket_id) DO UPDATE SET shard_id = EXCLUDED.shard_id",
+        [candidateVersion, row.bucket, row.shard]
+      );
+    }
+    console.log(`candidate map seeded: version=${candidateVersion} members=${members}`);
+  }
 
   for (const c of Object.values(pools)) await c.end();
   await catalog.end();
