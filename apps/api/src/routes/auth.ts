@@ -6,6 +6,7 @@ import { verifyPassword, hashPassword } from "../auth/password.js";
 import { signAccessToken } from "../auth/token.js";
 import { createSession, getSession, rotateSession, destroySession, hashToken } from "../auth/sessions.js";
 import { writeAudit } from "../audit/audit.js";
+import { assertCatalogOpen, CatalogGateError, gateError } from "../catalog-gate.js";
 import { requireAuth, requireRoles, type AuthedRequest } from "../middleware/auth.js";
 import { loginLimit } from "../middleware/rate-limit.js";
 
@@ -95,6 +96,7 @@ authRouter.post("/invitations", requireAuth, requireRoles("HR", "ADMIN"), async 
   const client = await catalogPool.connect();
   try {
     await client.query("BEGIN");
+    await assertCatalogOpen(client);
     const existing = await client.query("SELECT 1 FROM users WHERE email_norm = $1", [norm]);
     if (existing.rows.length > 0) {
       await client.query("ROLLBACK");
@@ -112,8 +114,12 @@ authRouter.post("/invitations", requireAuth, requireRoles("HR", "ADMIN"), async 
     );
     await client.query("COMMIT");
     res.status(201).json({ success: true, data: { invitationId: id, token } });
-  } catch (e: unknown) {
+  } catch (e) {
     await client.query("ROLLBACK");
+    if (e instanceof CatalogGateError) {
+      gateError(res);
+      return;
+    }
     if (typeof e === "object" && e !== null && "code" in e && (e as { code: string }).code === "23505") {
       res.status(409).json(errorEnvelope("DUPLICATE_IDENTITY", "An invitation for this email is already open"));
       return;
@@ -139,6 +145,7 @@ authRouter.post("/accept", loginLimit, async (req, res) => {  const { token, pas
   const client = await catalogPool.connect();
   try {
     await client.query("BEGIN");
+    await assertCatalogOpen(client);
     const inv = await client.query("SELECT * FROM invitations WHERE token_hash = $1 FOR UPDATE", [hashToken(token)]);
     if (inv.rows.length === 0) {
       await client.query("ROLLBACK");
@@ -171,8 +178,12 @@ authRouter.post("/accept", loginLimit, async (req, res) => {  const { token, pas
     const signed = signAccessToken({ userId, roles: [row.role] });
     res.cookie(REFRESH_COOKIE, session.sessionId, cookieOpts);
     res.status(201).json({ success: true, data: { token: signed.token, expiresIn: signed.expiresIn, roles: [row.role], csrf: session.csrf } });
-  } catch (e: unknown) {
+  } catch (e) {
     await client.query("ROLLBACK");
+    if (e instanceof CatalogGateError) {
+      gateError(res);
+      return;
+    }
     if (typeof e === "object" && e !== null && "code" in e && (e as { code: string }).code === "23505") {
       res.status(409).json(errorEnvelope("DUPLICATE_IDENTITY", "An account with this email already exists"));
       return;

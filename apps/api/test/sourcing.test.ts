@@ -7,7 +7,7 @@ async function hrLogin(): Promise<string> {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ email: "hr@hrms.local", password: "ChangeMe123!" }),
-  }, 90000);
+  });
   expect(res.status).toBe(200);
   return ((await res.json()) as { data: { token: string } }).data.token;
 }
@@ -17,7 +17,7 @@ async function startRun(hr: string, skills: string[]): Promise<string> {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${hr}` },
     body: JSON.stringify({ role: "backend", skills }),
-  }, 90000);
+  });
   expect(r.status).toBe(202);
   return ((await r.json()) as { data: { runId: string } }).data.runId;
 }
@@ -35,7 +35,7 @@ async function waitRun(hr: string, runId: string): Promise<{ status: string; pag
 describe("Phase 7 sourcing crawler", () => {
   beforeAll(async () => {
     await fetch(`${base}/system/test/reset-limiter`, { method: "POST" });
-  }, 90000);
+  });
 
   it("discovers, dedupes and imports portal candidates; reruns add nothing", async () => {
     const hr = await hrLogin();

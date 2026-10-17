@@ -111,6 +111,24 @@ async function applyEvent(
       }
       break;
     }
+    case "REVIEW_RELEASED": {
+      const map = handles.map;
+      if (!map) throw new Error("no-routing-map-for-notification");
+      const bucket = stableEmployeeBucket(event.employee_id);
+      const shard = map.get(bucket);
+      const pool = shard ? handles.shards[shard] : undefined;
+      if (!pool) throw new Error(`no-shard-for-notification:${bucket}`);
+      const nclient = await pool.connect();
+      try {
+        await nclient.query(
+          "INSERT INTO notifications (notification_id, employee_id, bucket_id, kind, title, body) VALUES ($1, $2, $3, 'performance', 'Review released', $4) ON CONFLICT DO NOTHING",
+          [event.event_id, event.employee_id, bucket, "Your performance review is ready to view."]
+        );
+      } finally {
+        nclient.release();
+      }
+      break;
+    }
     case "AUDIT": {
       await handles.catalog.query(
         "INSERT INTO audit_logs (event_id, actor, action, resource, metadata) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING",

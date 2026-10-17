@@ -7,6 +7,36 @@ import { runDispatcherOnce, loadActiveMap, runPayrollChunk, createIdIssuer, type
 import { runCrawlRun } from "./crawl.js";
 import { catalogPool as catalog, shardPools as shards } from "./pools.js";
 
+async function registerWorker(): Promise<void> {
+  try {
+    const gate = await catalog.query("SELECT epoch, state FROM catalog_write_gate WHERE id = 1");
+    const map = await catalog.query("SELECT version FROM routing_map_versions WHERE domain = 'employee' AND active = TRUE");
+    const pid = `worker:${process.pid}`;
+    await catalog.query(
+      "INSERT INTO process_registry (process_id, kind, owner, heartbeat_at, expires_at, map_version_loaded, gate_epoch_ack, gate_epoch, gate_state) VALUES ($1,'WORKER',$2,now(), now() + make_interval(secs => 30), $3, $4, $4, $5) ON CONFLICT (process_id) DO UPDATE SET heartbeat_at = now(), expires_at = now() + make_interval(secs => 30)",
+      [pid, pid, (map.rows[0] as { version: number } | undefined)?.version ?? 1, (gate.rows[0] as { epoch: number } | undefined)?.epoch ?? 0, (gate.rows[0] as { state: string } | undefined)?.state ?? "OPEN"]
+    );
+    setInterval(async () => {
+      try {
+        const g = await catalog.query("SELECT epoch, state FROM catalog_write_gate WHERE id = 1");
+        const m = await catalog.query("SELECT version FROM routing_map_versions WHERE domain = 'employee' AND active = TRUE");
+        await catalog.query("UPDATE process_registry SET heartbeat_at = now(), expires_at = now() + make_interval(secs => 30), map_version_loaded = $2, gate_epoch_ack = $3, gate_epoch = $3, gate_state = $4 WHERE process_id = $1", [
+          pid,
+          (m.rows[0] as { version: number } | undefined)?.version ?? 1,
+          (g.rows[0] as { epoch: number } | undefined)?.epoch ?? 0,
+          (g.rows[0] as { state: string } | undefined)?.state ?? "OPEN",
+        ]);
+      } catch {
+        // unreachable catalog: local deadline bounds further writes
+      }
+    }, 5000).unref?.();
+  } catch (e) {
+    console.error("process registry unavailable at startup:", (e as Error).message);
+  }
+}
+
+registerWorker();
+
 const queueConnection = new Redis(process.env.REDIS_QUEUE_URL ?? "redis://localhost:6379", {
   maxRetriesPerRequest: null,
 });

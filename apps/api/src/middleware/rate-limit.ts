@@ -17,6 +17,13 @@ function limiter(): TokenBucket {
 
 export function rateLimit(scope: string, spec: LimitSpec) {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    const bypass = (process.env.RATE_LIMIT_BYPASS_IPS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+    const ip = (req.ip ?? "").replace(/^::ffff:/, "");
+    if (bypass.length > 0 && (bypass.includes(req.ip ?? "") || bypass.includes(ip))) {
+      res.setHeader("x-ratelimit-bypass", "test");
+      next();
+      return;
+    }
     const authed = req as Request & { userId?: string };
     const identity = authed.userId ?? req.ip ?? "anon";
     try {

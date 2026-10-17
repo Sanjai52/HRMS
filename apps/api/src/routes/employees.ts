@@ -9,6 +9,7 @@ import {
   GateClosedError,
 } from "@hrms/core";
 import { catalogPool, shardPools } from "../db/pools.js";
+import { assertCatalogOpen, CatalogGateError, gateError } from "../catalog-gate.js";
 import { requireAuth, requireRoles, type AuthedRequest } from "../middleware/auth.js";
 import { searchLimit } from "../middleware/rate-limit.js";
 import { destroyUserSessions } from "../auth/sessions.js";
@@ -28,10 +29,71 @@ employeesRouter.get("/me", requireAuth, async (req: AuthedRequest, res) => {
     return;
   }
   const d = await catalogPool.query(
-    "SELECT employee_id, name, email, department, designation, status, updated_at FROM employee_directory WHERE email_norm = $1",
+    "SELECT employee_id, name, email, department, designation, status, version, updated_at FROM employee_directory WHERE email_norm = $1",
     [u.rows[0].email_norm]
   );
   res.json({ success: true, data: d.rows[0] ?? null });
+});
+
+employeesRouter.patch("/me", requireAuth, async (req: AuthedRequest, res) => {
+  const { name, version } = req.body as { name?: string; version?: number };
+  if (typeof name !== "string" || name.trim().length < 2 || typeof version !== "number") {
+    res.status(400).json(errorEnvelope("VALIDATION_ERROR", "Name and current version are required"));
+    return;
+  }
+  const u = await catalogPool.query("SELECT email_norm FROM users WHERE user_id = $1", [req.userId]);
+  if (u.rows.length === 0) {
+    res.status(404).json(errorEnvelope("NOT_FOUND", "Account not found"));
+    return;
+  }
+  const d = await catalogPool.query("SELECT employee_id FROM employee_directory WHERE email_norm = $1", [u.rows[0].email_norm]);
+  if (d.rows.length === 0) {
+    res.status(404).json(errorEnvelope("NOT_FOUND", "No employee record for this account yet"));
+    return;
+  }
+  const employeeId = d.rows[0].employee_id as string;
+  const { map } = await loadActiveMap(catalogPool);
+  const pool = shardPools[resolveShard(employeeId, map)];
+  if (!pool) {
+    res.status(500).json(errorEnvelope("ROUTING_ERROR", "No shard owns this record"));
+    return;
+  }
+  let eventId: string;
+  try {
+    eventId = nextEventId();
+  } catch (e) {
+    if (e instanceof LeaseExpiredError) {
+      leaseError(res);
+      return;
+    }
+    throw e;
+  }
+  try {
+    const updated = await withFencedWrite(pool, async (c) => {
+      const r = await c.query("UPDATE employees SET name = $2, version = version + 1, updated_at = now() WHERE employee_id = $1 AND version = $3 RETURNING employee_id, bucket_id, name, email, version", [employeeId, name.trim(), version]);
+      if (r.rows.length === 0) return null;
+      const row = r.rows[0] as { employee_id: string; bucket_id: number; name: string; email: string; version: number };
+      await c.query("INSERT INTO outbox_events (event_id, employee_id, bucket_id, type, payload, version) VALUES ($1,$2,$3,'EMPLOYEE_UPDATED',$4,$5)", [
+        eventId,
+        row.employee_id,
+        row.bucket_id,
+        JSON.stringify({ name: row.name, email: row.email }),
+        row.version,
+      ]);
+      return row;
+    });
+    if (!updated) {
+      res.status(409).json(errorEnvelope("VERSION_CONFLICT", "Your profile changed. Reload and try again."));
+      return;
+    }
+    res.json({ success: true, data: updated });
+  } catch (e) {
+    if (e instanceof GateClosedError) {
+      res.status(503).json(errorEnvelope("GATE_CLOSED", "Writes are paused for maintenance. Try again shortly."));
+      return;
+    }
+    throw e;
+  }
 });
 
 employeesRouter.get("/", requireAuth, requireRoles("HR", "ADMIN", "MANAGER"), searchLimit, async (req, res) => {
@@ -68,6 +130,7 @@ employeesRouter.post("/onboard", requireAuth, requireRoles("HR", "ADMIN"), async
   const client = await catalogPool.connect();
   try {
     await client.query("BEGIN");
+    await assertCatalogOpen(client);
     const inv = await client.query("SELECT * FROM invitations WHERE invitation_id = $1 FOR UPDATE", [invitationId]);
     if (inv.rows.length === 0) {
       await client.query("ROLLBACK");
@@ -115,6 +178,10 @@ employeesRouter.post("/onboard", requireAuth, requireRoles("HR", "ADMIN"), async
     res.status(201).json({ success: true, data: { employeeId, bucket, shard } });
   } catch (e) {
     await client.query("ROLLBACK");
+    if (e instanceof CatalogGateError) {
+      gateError(res);
+      return;
+    }
     throw e;
   } finally {
     client.release();

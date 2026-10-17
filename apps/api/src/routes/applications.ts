@@ -15,6 +15,7 @@ import { catalogPool, shardPools } from "../db/pools.js";
 import { requireAuth, requireRoles, type AuthedRequest } from "../middleware/auth.js";
 import { publicApplyLimit, shortLinkLimit } from "../middleware/rate-limit.js";
 import { writeAudit } from "../audit/audit.js";
+import { assertCatalogOpen, CatalogGateError, gateError } from "../catalog-gate.js";
 import { createStorage } from "../storage/minio.js";
 import { hashToken } from "../auth/sessions.js";
 
@@ -399,14 +400,19 @@ applicationsRouter.post("/applications/:id/convert", requireAuth, requireRoles("
   const client = await catalogPool.connect();
   try {
     await client.query("BEGIN");
+    await assertCatalogOpen(client);
     await client.query(
       "INSERT INTO invitations (invitation_id, email, email_norm, name, role, token_hash, status, expires_at, created_by) VALUES ($1,$2,$3,$4,'EMPLOYEE',$5,'INVITED', now() + interval '7 days', $6)",
       [invitationId, c.email, c.email.toLowerCase(), c.name, hashToken(token), req.userId ?? ""]
     );
     await writeAudit({ query: client.query.bind(client) }, { actor: req.userId ?? "", action: "candidate.converted", resource: `application:${req.params.id}`, metadata: { invitationId } });
     await client.query("COMMIT");
-  } catch (e: unknown) {
+  } catch (e) {
     await client.query("ROLLBACK");
+    if (e instanceof CatalogGateError) {
+      gateError(res);
+      return;
+    }
     if (typeof e === "object" && e !== null && "code" in e && (e as { code: string }).code === "23505") {
       res.status(409).json(errorEnvelope("DUPLICATE_IDENTITY", "This email already has an account or invitation"));
       return;
