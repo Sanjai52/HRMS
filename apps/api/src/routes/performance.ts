@@ -11,6 +11,7 @@ import { catalogPool, shardPools } from "../db/pools.js";
 import { requireAuth, requireRoles, type AuthedRequest } from "../middleware/auth.js";
 import { selfEmployeeId, shardFor, ownedBuckets } from "../directory/self.js";
 import { writeAudit } from "../audit/audit.js";
+import { assertCatalogOpen, CatalogGateError, gateError } from "../catalog-gate.js";
 
 export const performanceRouter = Router();
 
@@ -39,18 +40,49 @@ performanceRouter.post("/cycles", requireAuth, requireRoles("HR", "ADMIN"), asyn
   }
   const id = leaseId(res);
   if (!id) return;
-  await catalogPool.query("INSERT INTO review_cycles (cycle_id, name, start_date, end_date, status, created_by) VALUES ($1,$2,$3,$4,'ACTIVE',$5)", [id, name.trim(), start, end, req.userId ?? ""]);
-  await writeAudit(catalogPool, { actor: req.userId ?? "", action: "perf.cycle_created", resource: `cycle:${id}`, metadata: { name } });
+  const client = await catalogPool.connect();
+  try {
+    await client.query("BEGIN");
+    await assertCatalogOpen(client);
+    await client.query("INSERT INTO review_cycles (cycle_id, name, start_date, end_date, status, created_by) VALUES ($1,$2,$3,$4,'ACTIVE',$5)", [id, name.trim(), start, end, req.userId ?? ""]);
+    await writeAudit({ query: client.query.bind(client) }, { actor: req.userId ?? "", action: "perf.cycle_created", resource: `cycle:${id}`, metadata: { name } });
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    if (e instanceof CatalogGateError) {
+      gateError(res);
+      return;
+    }
+    throw e;
+  } finally {
+    client.release();
+  }
   res.status(201).json({ success: true, data: { cycleId: id } });
 });
 
 performanceRouter.post("/cycles/:id/close", requireAuth, requireRoles("HR", "ADMIN"), async (req: AuthedRequest, res) => {
-  const r = await catalogPool.query("UPDATE review_cycles SET status = 'CLOSED' WHERE cycle_id = $1 AND status = 'ACTIVE' RETURNING cycle_id", [req.params.id]);
-  if (r.rows.length === 0) {
-    res.status(404).json(errorEnvelope("NOT_FOUND", "Active cycle not found"));
-    return;
+  const client = await catalogPool.connect();
+  try {
+    await client.query("BEGIN");
+    await assertCatalogOpen(client);
+    const r = await client.query("UPDATE review_cycles SET status = 'CLOSED' WHERE cycle_id = $1 AND status = 'ACTIVE' RETURNING cycle_id", [req.params.id]);
+    if (r.rows.length === 0) {
+      await client.query("ROLLBACK");
+      res.status(404).json(errorEnvelope("NOT_FOUND", "Active cycle not found"));
+      return;
+    }
+    await writeAudit({ query: client.query.bind(client) }, { actor: req.userId ?? "", action: "perf.cycle_closed", resource: `cycle:${req.params.id}` });
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    if (e instanceof CatalogGateError) {
+      gateError(res);
+      return;
+    }
+    throw e;
+  } finally {
+    client.release();
   }
-  await writeAudit(catalogPool, { actor: req.userId ?? "", action: "perf.cycle_closed", resource: `cycle:${req.params.id}` });
   res.json({ success: true, data: { cycleId: req.params.id } });
 });
 

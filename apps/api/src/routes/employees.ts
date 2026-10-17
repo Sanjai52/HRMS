@@ -354,6 +354,31 @@ employeesRouter.post("/:id/deactivate", requireAuth, requireRoles("HR", "ADMIN")
     res.status(500).json(errorEnvelope("ROUTING_ERROR", "No shard owns this record"));
     return;
   }
+  const pre = await pool.query("SELECT email FROM employees WHERE employee_id = $1", [req.params.id]);
+  if (pre.rows.length === 0) {
+    res.status(404).json(errorEnvelope("NOT_FOUND", "Employee not found or already inactive"));
+    return;
+  }
+  const email = (pre.rows[0] as { email: string }).email;
+  const gateClient = await catalogPool.connect();
+  try {
+    await gateClient.query("BEGIN");
+    await assertCatalogOpen(gateClient);
+    await gateClient.query("UPDATE users SET status = 'INACTIVE' WHERE email_norm = $1", [email]);
+    await gateClient.query("COMMIT");
+  } catch (e) {
+    await gateClient.query("ROLLBACK");
+    if (e instanceof CatalogGateError) {
+      gateError(res);
+      return;
+    }
+    throw e;
+  } finally {
+    gateClient.release();
+  }
+  const u = await catalogPool.query("SELECT user_id FROM users WHERE email_norm = $1", [email]);
+  if (u.rows.length > 0) await destroyUserSessions(u.rows[0].user_id as string);
+  const { map: reassignMap } = await loadActiveMap(catalogPool);
   try {
     const row = await withFencedWrite(pool, async (c) => {
       const r = await c.query("UPDATE employees SET status = 'INACTIVE', version = version + 1, updated_at = now() WHERE employee_id = $1 AND status <> 'INACTIVE' RETURNING employee_id, bucket_id, name, email, version", [req.params.id]);
@@ -379,10 +404,6 @@ employeesRouter.post("/:id/deactivate", requireAuth, requireRoles("HR", "ADMIN")
       res.status(404).json(errorEnvelope("NOT_FOUND", "Employee not found or already inactive"));
       return;
     }
-    await catalogPool.query("UPDATE users SET status = 'INACTIVE' WHERE email_norm = $1", [row.email]);
-    const u = await catalogPool.query("SELECT user_id FROM users WHERE email_norm = $1", [row.email]);
-    if (u.rows.length > 0) await destroyUserSessions(u.rows[0].user_id as string);
-    const { map: reassignMap } = await loadActiveMap(catalogPool);
     for (const [reShard, rePool] of Object.entries(shardPools)) {
       if (reShard === "shard-4") continue;
       const owned = [...reassignMap].filter(([, s]) => s === reShard).map(([b]) => b);

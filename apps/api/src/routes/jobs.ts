@@ -7,6 +7,7 @@ import { redisKv } from "../db/redis.js";
 import { requireAuth, requireRoles, type AuthedRequest } from "../middleware/auth.js";
 import { shortLinkLimit } from "../middleware/rate-limit.js";
 import { writeAudit } from "../audit/audit.js";
+import { assertCatalogOpen, CatalogGateError, gateError } from "../catalog-gate.js";
 
 export const jobsRouter = Router();
 
@@ -49,6 +50,7 @@ jobsRouter.post("/", requireAuth, requireRoles("HR", "ADMIN"), async (req: Authe
   const client = await catalogPool.connect();
   try {
     await client.query("BEGIN");
+    await assertCatalogOpen(client);
     await client.query(
       "INSERT INTO jobs (job_id, slug, title, department, description, required_skills, experience, location, employment_type, salary_range, status, created_by, closing_date) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'OPEN',$11,$12)",
       [jobId, slug, title.trim(), (department as string) ?? "", (description as string) ?? "", (requiredSkills as string[]) ?? [], (experience as string) ?? "", (location as string) ?? "", (employmentType as string) ?? "FULL_TIME", (salaryRange as string) ?? "", req.userId ?? "", (closingDate as string) ?? null]
@@ -57,6 +59,10 @@ jobsRouter.post("/", requireAuth, requireRoles("HR", "ADMIN"), async (req: Authe
     await client.query("COMMIT");
   } catch (e) {
     await client.query("ROLLBACK");
+    if (e instanceof CatalogGateError) {
+      gateError(res);
+      return;
+    }
     throw e;
   } finally {
     client.release();
@@ -65,12 +71,28 @@ jobsRouter.post("/", requireAuth, requireRoles("HR", "ADMIN"), async (req: Authe
 });
 
 jobsRouter.post("/:jobId/close", requireAuth, requireRoles("HR", "ADMIN"), async (req: AuthedRequest, res) => {
-  const r = await catalogPool.query("UPDATE jobs SET status = 'CLOSED' WHERE job_id = $1 AND status = 'OPEN' RETURNING job_id", [req.params.jobId]);
-  if (r.rows.length === 0) {
-    res.status(404).json(errorEnvelope("NOT_FOUND", "Open job not found"));
-    return;
+  const client = await catalogPool.connect();
+  try {
+    await client.query("BEGIN");
+    await assertCatalogOpen(client);
+    const r = await client.query("UPDATE jobs SET status = 'CLOSED' WHERE job_id = $1 AND status = 'OPEN' RETURNING job_id", [req.params.jobId]);
+    if (r.rows.length === 0) {
+      await client.query("ROLLBACK");
+      res.status(404).json(errorEnvelope("NOT_FOUND", "Open job not found"));
+      return;
+    }
+    await writeAudit({ query: client.query.bind(client) }, { actor: req.userId ?? "", action: "job.closed", resource: `job:${req.params.jobId}` });
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    if (e instanceof CatalogGateError) {
+      gateError(res);
+      return;
+    }
+    throw e;
+  } finally {
+    client.release();
   }
-  await writeAudit(catalogPool, { actor: req.userId ?? "", action: "job.closed", resource: `job:${req.params.jobId}` });
   res.json({ success: true, data: { jobId: req.params.jobId } });
 });
 
@@ -83,14 +105,25 @@ shortRouter.post("/short-urls", requireAuth, requireRoles("HR", "ADMIN"), async 
   }
   for (let i = 0; i < 5; i++) {
     const code = randomCode();
+    const client = await catalogPool.connect();
     try {
-      await catalogPool.query("INSERT INTO short_urls (code, destination) VALUES ($1, $2)", [code, destination]);
-      await writeAudit(catalogPool, { actor: req.userId ?? "", action: "shortlink.created", resource: `short:${code}`, metadata: { destination } });
+      await client.query("BEGIN");
+      await assertCatalogOpen(client);
+      await client.query("INSERT INTO short_urls (code, destination) VALUES ($1, $2)", [code, destination]);
+      await writeAudit({ query: client.query.bind(client) }, { actor: req.userId ?? "", action: "shortlink.created", resource: `short:${code}`, metadata: { destination } });
+      await client.query("COMMIT");
       res.status(201).json({ success: true, data: { code, destination } });
       return;
     } catch (e: unknown) {
+      await client.query("ROLLBACK");
+      if (e instanceof CatalogGateError) {
+        gateError(res);
+        return;
+      }
       if (typeof e === "object" && e !== null && "code" in e && (e as { code: string }).code === "23505") continue;
       throw e;
+    } finally {
+      client.release();
     }
   }
   res.status(500).json(errorEnvelope("CODE_COLLISION", "Could not mint a unique code. Try again."));

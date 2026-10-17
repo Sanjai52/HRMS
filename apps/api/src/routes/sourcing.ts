@@ -6,6 +6,7 @@ import { catalogPool } from "../db/pools.js";
 import { requireAuth, requireRoles, type AuthedRequest } from "../middleware/auth.js";
 import { searchLimit } from "../middleware/rate-limit.js";
 import { writeAudit } from "../audit/audit.js";
+import { assertCatalogOpen, CatalogGateError, gateError } from "../catalog-gate.js";
 
 export const sourcingRouter = Router();
 
@@ -22,24 +23,51 @@ sourcingRouter.post("/runs", requireAuth, requireRoles("HR", "ADMIN"), searchLim
     }
     throw e;
   }
-  await catalogPool.query("INSERT INTO crawl_runs (run_id, role, skills, status, created_by) VALUES ($1, $2, $3, 'PENDING', $4)", [
-    runId,
-    typeof role === "string" ? role.slice(0, 120) : "",
-    skillList,
-    req.userId ?? "",
-  ]);
+  const client = await catalogPool.connect();
+  try {
+    await client.query("BEGIN");
+    await assertCatalogOpen(client);
+    await client.query("INSERT INTO crawl_runs (run_id, role, skills, status, created_by) VALUES ($1, $2, $3, 'PENDING', $4)", [
+      runId,
+      typeof role === "string" ? role.slice(0, 120) : "",
+      skillList,
+      req.userId ?? "",
+    ]);
+    await writeAudit({ query: client.query.bind(client) }, { actor: req.userId ?? "", action: "crawl.started", resource: `crawl:${runId}`, metadata: { role, skills: skillList } });
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    if (e instanceof CatalogGateError) {
+      gateError(res);
+      return;
+    }
+    throw e;
+  } finally {
+    client.release();
+  }
   const queue = new BullMqJobQueue(process.env.REDIS_QUEUE_URL ?? "redis://localhost:6379");
   try {
     await queue.enqueue("crawler-run", { runId }, { jobId: `crawl-${runId}` });
   } catch (e) {
-    await catalogPool.query("UPDATE crawl_runs SET status = 'FAILED' WHERE run_id = $1", [runId]);
+    const failClient = await catalogPool.connect();
+    try {
+      await failClient.query("BEGIN");
+      await assertCatalogOpen(failClient);
+      await failClient.query("UPDATE crawl_runs SET status = 'FAILED' WHERE run_id = $1", [runId]);
+      await failClient.query("COMMIT");
+    } catch (markErr) {
+      await failClient.query("ROLLBACK").catch(() => undefined);
+      if (!(markErr instanceof CatalogGateError)) throw markErr;
+      console.error(`crawl run ${runId}: catalog gated, run left PENDING after enqueue failure`);
+    } finally {
+      failClient.release();
+    }
     await queue.close().catch(() => undefined);
     console.error(`crawl enqueue failed for ${runId}:`, (e as Error).message);
     res.status(502).json(errorEnvelope("QUEUE_UNAVAILABLE", "Crawl queue is unavailable."));
     return;
   }
   await queue.close().catch(() => undefined);
-  await writeAudit(catalogPool, { actor: req.userId ?? "", action: "crawl.started", resource: `crawl:${runId}`, metadata: { role, skills: skillList } });
   res.status(202).json({ success: true, data: { runId } });
 });
 

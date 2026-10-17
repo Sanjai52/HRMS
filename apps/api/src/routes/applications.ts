@@ -90,13 +90,28 @@ applicationsRouter.post(
       }
       throw e;
     }
-    const claimed = await catalogPool.query("INSERT INTO candidate_email_claims (email_norm, candidate_id) VALUES ($1, $2) ON CONFLICT (email_norm) DO NOTHING RETURNING candidate_id", [norm, `cand-${appId}`]);
+    const claimClient = await catalogPool.connect();
     let candidateId: string;
-    if (claimed.rows.length > 0) {
-      candidateId = (claimed.rows[0] as { candidate_id: string }).candidate_id;
-    } else {
-      const existing = await catalogPool.query("SELECT candidate_id FROM candidate_email_claims WHERE email_norm = $1", [norm]);
-      candidateId = (existing.rows[0] as { candidate_id: string }).candidate_id;
+    try {
+      await claimClient.query("BEGIN");
+      await assertCatalogOpen(claimClient);
+      const claimed = await claimClient.query("INSERT INTO candidate_email_claims (email_norm, candidate_id) VALUES ($1, $2) ON CONFLICT (email_norm) DO NOTHING RETURNING candidate_id", [norm, `cand-${appId}`]);
+      if (claimed.rows.length > 0) {
+        candidateId = (claimed.rows[0] as { candidate_id: string }).candidate_id;
+      } else {
+        const existing = await claimClient.query("SELECT candidate_id FROM candidate_email_claims WHERE email_norm = $1", [norm]);
+        candidateId = (existing.rows[0] as { candidate_id: string }).candidate_id;
+      }
+      await claimClient.query("COMMIT");
+    } catch (e) {
+      await claimClient.query("ROLLBACK");
+      if (e instanceof CatalogGateError) {
+        gateError(res);
+        return;
+      }
+      throw e;
+    } finally {
+      claimClient.release();
     }
     const route = await candidatePool(candidateId);
     if (!route) {
@@ -130,9 +145,24 @@ applicationsRouter.post(
       }
       throw e;
     }
-    await catalogPool.query("INSERT INTO application_index (application_id, candidate_id, job_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", [appId, candidateId, req.params.jobId]);
     const statusToken = randomBytes(32).toString("hex");
-    await catalogPool.query("INSERT INTO app_status_tokens (token_hash, application_id, expires_at) VALUES ($1, $2, now() + interval '30 days')", [hashToken(statusToken), appId]);
+    const indexClient = await catalogPool.connect();
+    try {
+      await indexClient.query("BEGIN");
+      await assertCatalogOpen(indexClient);
+      await indexClient.query("INSERT INTO application_index (application_id, candidate_id, job_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", [appId, candidateId, req.params.jobId]);
+      await indexClient.query("INSERT INTO app_status_tokens (token_hash, application_id, expires_at) VALUES ($1, $2, now() + interval '30 days')", [hashToken(statusToken), appId]);
+      await indexClient.query("COMMIT");
+    } catch (e) {
+      await indexClient.query("ROLLBACK");
+      if (e instanceof CatalogGateError) {
+        gateError(res);
+        return;
+      }
+      throw e;
+    } finally {
+      indexClient.release();
+    }
     res.status(201).json({ success: true, data: { applicationId: appId, statusToken } });
   }
 );

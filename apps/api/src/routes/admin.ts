@@ -4,6 +4,7 @@ import { catalogPool, shardPools } from "../db/pools.js";
 import { redisKv } from "../db/redis.js";
 import { requireAuth, requireRoles, type AuthedRequest } from "../middleware/auth.js";
 import { writeAudit } from "../audit/audit.js";
+import { assertCatalogOpen, CatalogGateError, gateError } from "../catalog-gate.js";
 import { previewNewShard, estimateMoves, startMigration, abortRun, allowedNewShard } from "../migration/runner.js";
 
 export const adminRouter = Router();
@@ -29,39 +30,58 @@ adminRouter.get("/audit-logs/:eventId", requireAuth, requireRoles("ADMIN"), asyn
 adminRouter.post("/rebuild-directory", requireAuth, requireRoles("ADMIN"), async (req: AuthedRequest, res) => {
   const redis = redisKv();
   let repaired = 0;
-  for (const [shardId, pool] of Object.entries(shardPools)) {
-    if (shardId === "shard-4") continue;
-    const rows = await pool.query("SELECT employee_id, email, name, department, designation, status, version FROM employees");
-    for (const r of rows.rows as Array<{ employee_id: string; email: string; name: string; department: string; designation: string; status: string; version: number }>) {
-      if (r.status === "ACTIVE") {
-        const up = await catalogPool.query(
-          `INSERT INTO employee_directory (employee_id, email, email_norm, name, department, designation, status, version)
-           VALUES ($1, $2, $3, $4, $5, $6, 'ACTIVE', $7)
-           ON CONFLICT (employee_id) DO UPDATE SET email = EXCLUDED.email, email_norm = EXCLUDED.email_norm,
-             name = EXCLUDED.name, department = EXCLUDED.department, designation = EXCLUDED.designation,
-             status = 'ACTIVE', version = EXCLUDED.version, updated_at = now()
-           WHERE employee_directory.version <= EXCLUDED.version RETURNING employee_id`,
-          [r.employee_id, r.email, r.email.toLowerCase(), r.name, r.department, r.designation, r.version]
-        );
-        repaired += up.rows.length;
-        const member = suggestMember(r.employee_id, r.name, r.department);
-        for (const prefix of new Set([...prefixesFor(r.name), ...prefixesFor(r.email)])) {
-          const key = suggestKey(prefix);
-          await redis.zadd(key, Date.now().toString(), member);
-          await redis.zremrangebyrank(key, 0, -(AUTOCOMPLETE_TOP_K + 1));
+  const client = await catalogPool.connect();
+  try {
+    await client.query("BEGIN");
+    await assertCatalogOpen(client);
+    // Batch autocomplete writes into one pipeline: the sequential per-prefix
+    // awaits cost thousands of roundtrips on a large directory.
+    const autocomplete = redis.pipeline();
+    for (const [shardId, pool] of Object.entries(shardPools)) {
+      if (shardId === "shard-4") continue;
+      const rows = await pool.query("SELECT employee_id, email, name, department, designation, status, version FROM employees");
+      for (const r of rows.rows as Array<{ employee_id: string; email: string; name: string; department: string; designation: string; status: string; version: number }>) {
+        if (r.status === "ACTIVE") {
+          const up = await client.query(
+            `INSERT INTO employee_directory (employee_id, email, email_norm, name, department, designation, status, version)
+             VALUES ($1, $2, $3, $4, $5, $6, 'ACTIVE', $7)
+             ON CONFLICT (employee_id) DO UPDATE SET email = EXCLUDED.email, email_norm = EXCLUDED.email_norm,
+               name = EXCLUDED.name, department = EXCLUDED.department, designation = EXCLUDED.designation,
+               status = 'ACTIVE', version = EXCLUDED.version, updated_at = now()
+             WHERE employee_directory.version <= EXCLUDED.version RETURNING employee_id`,
+            [r.employee_id, r.email, r.email.toLowerCase(), r.name, r.department, r.designation, r.version]
+          );
+          repaired += up.rows.length;
+          const member = suggestMember(r.employee_id, r.name, r.department);
+          for (const prefix of new Set([...prefixesFor(r.name), ...prefixesFor(r.email)])) {
+            const key = suggestKey(prefix);
+            autocomplete.zadd(key, Date.now().toString(), member);
+            autocomplete.zremrangebyrank(key, 0, -(AUTOCOMPLETE_TOP_K + 1));
+          }
+        } else {
+          const del = await client.query("DELETE FROM employee_directory WHERE employee_id = $1", [r.employee_id]);
+          repaired += del.rowCount ?? 0;
         }
-      } else {
-        const del = await catalogPool.query("DELETE FROM employee_directory WHERE employee_id = $1", [r.employee_id]);
-        repaired += del.rowCount ?? 0;
       }
     }
+    await autocomplete.exec();
+    await writeAudit({ query: client.query.bind(client) }, {
+      actor: req.userId ?? "",
+      action: "directory.rebuilt",
+      resource: "employee_directory",
+      metadata: { repaired },
+    });
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    if (e instanceof CatalogGateError) {
+      gateError(res);
+      return;
+    }
+    throw e;
+  } finally {
+    client.release();
   }
-  await writeAudit(catalogPool, {
-    actor: req.userId ?? "",
-    action: "directory.rebuilt",
-    resource: "employee_directory",
-    metadata: { repaired },
-  });
   res.json({ success: true, data: { repaired } });
 });
 
@@ -159,8 +179,23 @@ adminRouter.post("/settings/departments", requireAuth, requireRoles("HR", "ADMIN
     res.status(400).json(errorEnvelope("VALIDATION_ERROR", "Department name is required"));
     return;
   }
-  await catalogPool.query("INSERT INTO departments (name) VALUES ($1) ON CONFLICT DO NOTHING", [name.trim()]);
-  await writeAudit(catalogPool, { actor: req.userId ?? "", action: "settings.department_added", resource: `department:${name.trim()}` });
+  const client = await catalogPool.connect();
+  try {
+    await client.query("BEGIN");
+    await assertCatalogOpen(client);
+    await client.query("INSERT INTO departments (name) VALUES ($1) ON CONFLICT DO NOTHING", [name.trim()]);
+    await writeAudit({ query: client.query.bind(client) }, { actor: req.userId ?? "", action: "settings.department_added", resource: `department:${name.trim()}` });
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    if (e instanceof CatalogGateError) {
+      gateError(res);
+      return;
+    }
+    throw e;
+  } finally {
+    client.release();
+  }
   res.status(201).json({ success: true, data: { name: name.trim() } });
 });
 
@@ -170,7 +205,22 @@ adminRouter.post("/settings/designations", requireAuth, requireRoles("HR", "ADMI
     res.status(400).json(errorEnvelope("VALIDATION_ERROR", "Designation name is required"));
     return;
   }
-  await catalogPool.query("INSERT INTO designations (name) VALUES ($1) ON CONFLICT DO NOTHING", [name.trim()]);
-  await writeAudit(catalogPool, { actor: req.userId ?? "", action: "settings.designation_added", resource: `designation:${name.trim()}` });
+  const client = await catalogPool.connect();
+  try {
+    await client.query("BEGIN");
+    await assertCatalogOpen(client);
+    await client.query("INSERT INTO designations (name) VALUES ($1) ON CONFLICT DO NOTHING", [name.trim()]);
+    await writeAudit({ query: client.query.bind(client) }, { actor: req.userId ?? "", action: "settings.designation_added", resource: `designation:${name.trim()}` });
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    if (e instanceof CatalogGateError) {
+      gateError(res);
+      return;
+    }
+    throw e;
+  } finally {
+    client.release();
+  }
   res.status(201).json({ success: true, data: { name: name.trim() } });
 });

@@ -12,6 +12,7 @@ import { catalogPool, shardPools } from "../db/pools.js";
 import { requireAuth, requireRoles, type AuthedRequest } from "../middleware/auth.js";
 import { selfEmployeeId, shardFor, ownedBuckets } from "../directory/self.js";
 import { BullMqJobQueue } from "@hrms/core";
+import { assertCatalogOpen, CatalogGateError, gateError } from "../catalog-gate.js";
 
 export const payrollRouter = Router();
 
@@ -102,6 +103,7 @@ payrollRouter.post("/batches", requireAuth, requireRoles("HR", "ADMIN"), async (
   const client = await catalogPool.connect();
   try {
     await client.query("BEGIN");
+    await assertCatalogOpen(client);
     await client.query("INSERT INTO payroll_batches (batch_id, period, status, created_by) VALUES ($1, $2, 'PENDING', $3)", [batchId, period, req.userId ?? ""]);
     await client.query("INSERT INTO audit_logs (event_id, actor, action, resource, metadata) VALUES ($1, $2, 'payroll.batch_created', $3, $4)", [
       `${batchId}-audit`,
@@ -112,6 +114,10 @@ payrollRouter.post("/batches", requireAuth, requireRoles("HR", "ADMIN"), async (
     await client.query("COMMIT");
   } catch (e) {
     await client.query("ROLLBACK");
+    if (e instanceof CatalogGateError) {
+      gateError(res);
+      return;
+    }
     throw e;
   } finally {
     client.release();
@@ -123,7 +129,19 @@ payrollRouter.post("/batches", requireAuth, requireRoles("HR", "ADMIN"), async (
     }
   } catch (e) {
     console.error(`payroll enqueue failed for ${batchId}:`, (e as Error).message);
-    await catalogPool.query("UPDATE payroll_batches SET status = 'FAILED' WHERE batch_id = $1", [batchId]);
+    const failClient = await catalogPool.connect();
+    try {
+      await failClient.query("BEGIN");
+      await assertCatalogOpen(failClient);
+      await failClient.query("UPDATE payroll_batches SET status = 'FAILED' WHERE batch_id = $1", [batchId]);
+      await failClient.query("COMMIT");
+    } catch (markErr) {
+      await failClient.query("ROLLBACK").catch(() => undefined);
+      if (!(markErr instanceof CatalogGateError)) throw markErr;
+      console.error(`payroll batch ${batchId}: catalog gated, batch left PENDING after enqueue failure`);
+    } finally {
+      failClient.release();
+    }
     await queue.close().catch(() => undefined);
     res.status(502).json(errorEnvelope("QUEUE_UNAVAILABLE", "Payroll queue is unavailable. The batch was marked failed."));
     return;
