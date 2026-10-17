@@ -42,3 +42,4 @@ export const loginLimit = rateLimit("login", { capacity: 30, windowMs: 60_000, f
 export const searchLimit = rateLimit("search", { capacity: 60, windowMs: 60_000, failOpen: true });
 export const publicApplyLimit = rateLimit("apply", { capacity: 10, windowMs: 60_000, failOpen: false });
 export const shortLinkLimit = rateLimit("short", { capacity: 60, windowMs: 60_000, failOpen: false });
+export const recoverLimit = rateLimit("recover", { capacity: 10, windowMs: 60_000, failOpen: false });

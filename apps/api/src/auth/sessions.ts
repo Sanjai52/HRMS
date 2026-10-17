@@ -12,6 +12,10 @@ function sid(): string {
   return randomUUID();
 }
 
+function userSessionsKey(userId: string): string {
+  return `usersessions:${userId}`;
+}
+
 export function newCsrf(): string {
   return randomBytes(32).toString("hex");
 }
@@ -21,6 +25,9 @@ export async function createSession(userId: string): Promise<{ sessionId: string
   const csrf = newCsrf();
   const record: SessionRecord = { userId, csrf };
   await kv().set(`session:${sessionId}`, JSON.stringify(record), SESSION_TTL);
+  // The revocable index has no KvStore operation, so it uses the raw client.
+  await redisKv().sadd(userSessionsKey(userId), sessionId);
+  await redisKv().expire(userSessionsKey(userId), SESSION_TTL);
   return { sessionId, csrf };
 }
 
@@ -32,26 +39,22 @@ export async function getSession(sessionId: string): Promise<SessionRecord | nul
 export async function rotateSession(oldId: string): Promise<{ sessionId: string; csrf: string } | null> {
   const record = await getSession(oldId);
   if (!record) return null;
+  await redisKv().srem(userSessionsKey(record.userId), oldId);
   await kv().del(`session:${oldId}`);
   return createSession(record.userId);
 }
 
 export async function destroySession(sessionId: string): Promise<void> {
+  const record = await getSession(sessionId);
+  if (record) await redisKv().srem(userSessionsKey(record.userId), sessionId);
   await kv().del(`session:${sessionId}`);
 }
 
+/** Revoke every session a user still holds (password reset, deactivation). */
 export async function destroyUserSessions(userId: string): Promise<void> {
-  // Key scanning has no KvStore operation, so the raw client walks `session:*`
-  // while the session values themselves go through kv().
-  let cursor = "0";
-  do {
-    const [next, keys] = await redisKv().scan(cursor, "MATCH", "session:*", "COUNT", 200);
-    cursor = next;
-    for (const key of keys) {
-      const raw = await kv().get(key);
-      if (raw && (JSON.parse(raw) as SessionRecord).userId === userId) await kv().del(key);
-    }
-  } while (cursor !== "0");
+  const ids = await redisKv().smembers(userSessionsKey(userId));
+  if (ids.length > 0) await Promise.all(ids.map((id) => kv().del(`session:${id}`)));
+  await redisKv().del(userSessionsKey(userId));
 }
 
 export function hashToken(token: string): string {

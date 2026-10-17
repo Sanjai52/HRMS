@@ -62,7 +62,12 @@ export default function LoginPage() {
               />
             </label>
             <label className="grid gap-2 text-sm">
-              <span className="font-semibold text-hof">Password</span>
+              <span className="flex items-center justify-between font-semibold text-hof">
+                Password
+                <a href="/forgot-password" className="font-medium text-foggy underline underline-offset-4 hover:text-hof">
+                  Forgot password?
+                </a>
+              </span>
               <input
                 type="password"
                 autoComplete="current-password"
