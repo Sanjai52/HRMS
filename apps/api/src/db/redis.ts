@@ -1,6 +1,8 @@
 import { Redis } from "ioredis";
+import { RedisKvStore, type KvStore } from "@hrms/core";
 
 let client: Redis | null = null;
+let store: KvStore | null = null;
 
 export function redisKv(): Redis {
   if (!client) {
@@ -11,4 +13,15 @@ export function redisKv(): Redis {
     });
   }
   return client;
+}
+
+/**
+ * Shared KvStore for simple get/set/del users (sessions, short-link cache) and
+ * the token-bucket limiter. Sorted-set, scan and counter users (autocomplete
+ * indexing, `rl:*` resets, click counters, the dispatcher) keep the raw
+ * `redisKv()` client.
+ */
+export function kv(): KvStore {
+  if (!store) store = new RedisKvStore(redisKv());
+  return store;
 }

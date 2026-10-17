@@ -3,7 +3,7 @@ import { errorEnvelope, slugify, randomCode, isAllowedDestination } from "@hrms/
 import { nextEventId } from "../ids.js";
 import { LeaseExpiredError } from "@hrms/core";
 import { catalogPool } from "../db/pools.js";
-import { redisKv } from "../db/redis.js";
+import { kv, redisKv } from "../db/redis.js";
 import { requireAuth, requireRoles, type AuthedRequest } from "../middleware/auth.js";
 import { shortLinkLimit } from "../middleware/rate-limit.js";
 import { writeAudit } from "../audit/audit.js";
@@ -138,8 +138,9 @@ publicRouter.get("/s/:code", shortLinkLimit, async (req, res) => {
     return;
   }
   try {
-    const cached = await redisKv().get(`short:${code}`);
+    const cached = await kv().get(`short:${code}`);
     if (cached) {
+      // Click counters are not part of KvStore; the raw client keeps them.
       await redisKv().incr(`shortclick:${code}`);
       res.redirect(302, `${process.env.WEB_ORIGIN ?? "http://localhost:3000"}${cached}`);
       return;
@@ -154,7 +155,7 @@ publicRouter.get("/s/:code", shortLinkLimit, async (req, res) => {
     return;
   }
   const dest = (rows.rows[0] as { destination: string }).destination;
-  await redisKv().set(`short:${code}`, dest, "EX", 3600).catch(() => undefined);
+  await kv().set(`short:${code}`, dest, 3600).catch(() => undefined);
   await catalogPool.query("UPDATE short_urls SET clicks = clicks + 1 WHERE code = $1", [code]);
   res.redirect(302, `${process.env.WEB_ORIGIN ?? "http://localhost:3000"}${dest}`);
 });

@@ -1,18 +1,11 @@
 import type { Request, Response, NextFunction } from "express";
-import { errorEnvelope, TokenBucket } from "@hrms/core";
-import { redisKv } from "../db/redis.js";
+import { errorEnvelope } from "@hrms/core";
+import { kv } from "../db/redis.js";
 
 export interface LimitSpec {
   capacity: number;
   windowMs: number;
   failOpen: boolean;
-}
-
-let bucket: TokenBucket | null = null;
-
-function limiter(): TokenBucket {
-  if (!bucket) bucket = new TokenBucket(redisKv(), "rl");
-  return bucket;
 }
 
 export function rateLimit(scope: string, spec: LimitSpec) {
@@ -27,7 +20,7 @@ export function rateLimit(scope: string, spec: LimitSpec) {
     const authed = req as Request & { userId?: string };
     const identity = authed.userId ?? req.ip ?? "anon";
     try {
-      const r = await limiter().take(`${scope}:${identity}`, spec.capacity, spec.windowMs);
+      const r = await kv().takeToken(`${scope}:${identity}`, spec.capacity, spec.windowMs);
       res.setHeader("x-ratelimit-remaining", String(r.remaining));
       if (!r.allowed) {
         res.setHeader("retry-after", String(Math.ceil(r.retryAfterMs / 1000)));
