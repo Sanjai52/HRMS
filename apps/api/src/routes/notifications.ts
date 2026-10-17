@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { errorEnvelope } from "@hrms/core";
+import { errorEnvelope, withFencedWrite, GateClosedError } from "@hrms/core";
 import { requireAuth, type AuthedRequest } from "../middleware/auth.js";
 import { selfEmployeeId, shardFor } from "../directory/self.js";
 
@@ -50,6 +50,16 @@ notificationsRouter.post("/:id/read", requireAuth, async (req: AuthedRequest, re
     res.status(500).json(errorEnvelope("ROUTING_ERROR", "No shard owns this record"));
     return;
   }
-  await t.pool.query("UPDATE notifications SET read_at = now() WHERE notification_id = $1 AND employee_id = $2", [req.params.id, me]);
+  try {
+    await withFencedWrite(t.pool, async (c) => {
+      await c.query("UPDATE notifications SET read_at = now() WHERE notification_id = $1 AND employee_id = $2", [req.params.id, me]);
+    });
+  } catch (e) {
+    if (e instanceof GateClosedError) {
+      res.status(503).json(errorEnvelope("GATE_CLOSED", "Writes are paused for maintenance. Try again shortly."));
+      return;
+    }
+    throw e;
+  }
   res.json({ success: true, data: null });
 });

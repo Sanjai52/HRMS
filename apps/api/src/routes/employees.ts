@@ -407,10 +407,12 @@ employeesRouter.post("/:id/deactivate", requireAuth, requireRoles("HR", "ADMIN")
     for (const [reShard, rePool] of Object.entries(shardPools)) {
       if (reShard === "shard-4") continue;
       const owned = [...reassignMap].filter(([, s]) => s === reShard).map(([b]) => b);
-      await rePool.query(
-        "UPDATE leave_requests SET status = 'PENDING_HR', version = version + 1 WHERE status = 'PENDING_MANAGER' AND bucket_id = ANY($2) AND employee_id IN (SELECT employee_id FROM employees WHERE manager_id = $1)",
-        [req.params.id, owned]
-      );
+      await withFencedWrite(rePool, async (c) => {
+        await c.query(
+          "UPDATE leave_requests SET status = 'PENDING_HR', version = version + 1 WHERE status = 'PENDING_MANAGER' AND bucket_id = ANY($2) AND employee_id IN (SELECT employee_id FROM employees WHERE manager_id = $1)",
+          [req.params.id, owned]
+        );
+      });
     }
     res.json({ success: true, data: { employeeId: row.employee_id } });
   } catch (e) {

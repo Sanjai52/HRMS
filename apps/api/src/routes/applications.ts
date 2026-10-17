@@ -125,8 +125,19 @@ applicationsRouter.post(
         res.status(409).json(errorEnvelope("DUPLICATE_APPLICATION", "You have already applied for this role"));
         return;
       }
-      await route.pool.query("UPDATE applications SET stage = 'APPLIED', version = version + 1, updated_at = now() WHERE application_id = $1", [(existing.rows[0] as { application_id: string }).application_id]);
-      res.json({ success: true, data: { applicationId: (existing.rows[0] as { application_id: string }).application_id, reused: true } });
+      const reusedId = (existing.rows[0] as { application_id: string }).application_id;
+      try {
+        await withFencedWrite(route.pool, async (c) => {
+          await c.query("UPDATE applications SET stage = 'APPLIED', version = version + 1, updated_at = now() WHERE application_id = $1", [reusedId]);
+        });
+      } catch (e) {
+        if (e instanceof GateClosedError) {
+          res.status(503).json(errorEnvelope("GATE_CLOSED", "Writes are paused for maintenance. Try again shortly."));
+          return;
+        }
+        throw e;
+      }
+      res.json({ success: true, data: { applicationId: reusedId, reused: true } });
       return;
     }
     try {
@@ -345,14 +356,24 @@ applicationsRouter.post("/applications/:id/interviews", requireAuth, requireRole
     }
     throw e;
   }
-  await route.pool.query("INSERT INTO interviews (interview_id, application_id, candidate_bucket_id, round, interviewer, scheduled_at) VALUES ($1,$2,$3,$4,$5,$6)", [
-    id,
-    req.params.id,
-    route.bucket,
-    round,
-    (interviewer as string) ?? "",
-    (scheduledAt as string) ?? null,
-  ]);
+  try {
+    await withFencedWrite(route.pool, async (c) => {
+      await c.query("INSERT INTO interviews (interview_id, application_id, candidate_bucket_id, round, interviewer, scheduled_at) VALUES ($1,$2,$3,$4,$5,$6)", [
+        id,
+        req.params.id,
+        route.bucket,
+        round,
+        (interviewer as string) ?? "",
+        (scheduledAt as string) ?? null,
+      ]);
+    });
+  } catch (e) {
+    if (e instanceof GateClosedError) {
+      res.status(503).json(errorEnvelope("GATE_CLOSED", "Writes are paused for maintenance. Try again shortly."));
+      return;
+    }
+    throw e;
+  }
   res.status(201).json({ success: true, data: { interviewId: id } });
 });
 
@@ -367,12 +388,22 @@ applicationsRouter.post("/applications/:id/interviews/:interviewId", requireAuth
     res.status(404).json(errorEnvelope("NOT_FOUND", "Application not found"));
     return;
   }
-  await route.pool.query("UPDATE interviews SET status = COALESCE($3, status), feedback = COALESCE($4, feedback) WHERE interview_id = $1 AND application_id = $2", [
-    req.params.interviewId,
-    req.params.id,
-    status ?? null,
-    (feedback as string) ?? null,
-  ]);
+  try {
+    await withFencedWrite(route.pool, async (c) => {
+      await c.query("UPDATE interviews SET status = COALESCE($3, status), feedback = COALESCE($4, feedback) WHERE interview_id = $1 AND application_id = $2", [
+        req.params.interviewId,
+        req.params.id,
+        status ?? null,
+        (feedback as string) ?? null,
+      ]);
+    });
+  } catch (e) {
+    if (e instanceof GateClosedError) {
+      res.status(503).json(errorEnvelope("GATE_CLOSED", "Writes are paused for maintenance. Try again shortly."));
+      return;
+    }
+    throw e;
+  }
   res.json({ success: true, data: null });
 });
 
@@ -397,13 +428,23 @@ applicationsRouter.post("/applications/:id/assessments", requireAuth, requireRol
     }
     throw e;
   }
-  await route.pool.query("INSERT INTO assessments (assessment_id, application_id, candidate_bucket_id, type, score, status, completed_at) VALUES ($1,$2,$3,$4,$5,'COMPLETED',now())", [
-    id,
-    req.params.id,
-    route.bucket,
-    type,
-    (score as string) ?? "",
-  ]);
+  try {
+    await withFencedWrite(route.pool, async (c) => {
+      await c.query("INSERT INTO assessments (assessment_id, application_id, candidate_bucket_id, type, score, status, completed_at) VALUES ($1,$2,$3,$4,$5,'COMPLETED',now())", [
+        id,
+        req.params.id,
+        route.bucket,
+        type,
+        (score as string) ?? "",
+      ]);
+    });
+  } catch (e) {
+    if (e instanceof GateClosedError) {
+      res.status(503).json(errorEnvelope("GATE_CLOSED", "Writes are paused for maintenance. Try again shortly."));
+      return;
+    }
+    throw e;
+  }
   res.status(201).json({ success: true, data: { assessmentId: id } });
 });
 
@@ -451,6 +492,16 @@ applicationsRouter.post("/applications/:id/convert", requireAuth, requireRoles("
   } finally {
     client.release();
   }
-  await route.pool.query("UPDATE applications SET converted_invitation_id = $2 WHERE application_id = $1", [req.params.id, invitationId]);
+  try {
+    await withFencedWrite(route.pool, async (c) => {
+      await c.query("UPDATE applications SET converted_invitation_id = $2 WHERE application_id = $1", [req.params.id, invitationId]);
+    });
+  } catch (e) {
+    if (e instanceof GateClosedError) {
+      res.status(503).json(errorEnvelope("GATE_CLOSED", "Writes are paused for maintenance. Try again shortly."));
+      return;
+    }
+    throw e;
+  }
   res.status(201).json({ success: true, data: { invitationId, token } });
 });
