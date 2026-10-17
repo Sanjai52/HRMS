@@ -12,7 +12,7 @@ import { fencedWrite } from "../fenced.js";
 import { nextEventId } from "../ids.js";
 import { LeaseExpiredError } from "@hrms/core";
 import { catalogPool } from "../db/pools.js";
-import { ownedShardPools, poolFor, type ShardPool } from "../db/shards.js";
+import { ownedShardPools, partialMeta, poolFor, type ShardPool } from "../db/shards.js";
 import { requireAuth, requireRoles, type AuthedRequest } from "../middleware/auth.js";
 import { publicApplyLimit, shortLinkLimit } from "../middleware/rate-limit.js";
 import { writeAudit } from "../audit/audit.js";
@@ -209,13 +209,18 @@ applicationsRouter.get("/candidates", requireAuth, requireRoles("HR", "ADMIN"), 
     (owned[shard] ??= []).push(bucket);
   }
   const out: unknown[] = [];
+  const unavailable: string[] = [];
   for (const { shard, pool } of ownedShardPools()) {
-    const r = q
-      ? await pool.query("SELECT candidate_id, name, email, source, created_at FROM candidates WHERE candidate_bucket_id = ANY($2) AND (name ILIKE $1 OR email LIKE $1) ORDER BY created_at DESC LIMIT 30", [`%${q}%`, owned[shard] ?? []])
-      : await pool.query("SELECT candidate_id, name, email, source, created_at FROM candidates WHERE candidate_bucket_id = ANY($1) ORDER BY created_at DESC LIMIT 30", [owned[shard] ?? []]);
-    out.push(...r.rows);
+    try {
+      const r = q
+        ? await pool.query("SELECT candidate_id, name, email, source, created_at FROM candidates WHERE candidate_bucket_id = ANY($2) AND (name ILIKE $1 OR email LIKE $1) ORDER BY created_at DESC LIMIT 30", [`%${q}%`, owned[shard] ?? []])
+        : await pool.query("SELECT candidate_id, name, email, source, created_at FROM candidates WHERE candidate_bucket_id = ANY($1) ORDER BY created_at DESC LIMIT 30", [owned[shard] ?? []]);
+      out.push(...r.rows);
+    } catch {
+      unavailable.push(shard);
+    }
   }
-  res.json({ success: true, data: out });
+  res.json({ success: true, data: out, meta: partialMeta(unavailable) });
 });
 
 applicationsRouter.get("/candidates/:id", requireAuth, requireRoles("HR", "ADMIN"), async (req, res) => {
@@ -242,14 +247,19 @@ applicationsRouter.get("/applications", requireAuth, requireRoles("HR", "ADMIN")
     (owned[shard] ??= []).push(bucket);
   }
   const out: unknown[] = [];
+  const unavailable: string[] = [];
   for (const { shard, pool } of ownedShardPools()) {
-    const r = await pool.query(
-      "SELECT a.*, c.name AS candidate_name FROM applications a JOIN candidates c ON c.candidate_id = a.candidate_id WHERE a.candidate_bucket_id = ANY($3) AND ($1::text IS NULL OR a.job_id = $1) AND ($2::text IS NULL OR a.stage = $2) ORDER BY a.applied_at DESC LIMIT 50",
-      [jobId, stage, owned[shard] ?? []]
-    );
-    out.push(...r.rows);
+    try {
+      const r = await pool.query(
+        "SELECT a.*, c.name AS candidate_name FROM applications a JOIN candidates c ON c.candidate_id = a.candidate_id WHERE a.candidate_bucket_id = ANY($3) AND ($1::text IS NULL OR a.job_id = $1) AND ($2::text IS NULL OR a.stage = $2) ORDER BY a.applied_at DESC LIMIT 50",
+        [jobId, stage, owned[shard] ?? []]
+      );
+      out.push(...r.rows);
+    } catch {
+      unavailable.push(shard);
+    }
   }
-  res.json({ success: true, data: out });
+  res.json({ success: true, data: out, meta: partialMeta(unavailable) });
 });
 
 applicationsRouter.get("/applications/:id", requireAuth, requireRoles("HR", "ADMIN"), async (req, res) => {

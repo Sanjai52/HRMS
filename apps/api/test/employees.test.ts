@@ -147,6 +147,15 @@ describe("Phase 3 employee lifecycle", () => {
     expect(stillGone.data.length).toBe(0);
   });
 
+  it("team read exposes a healthy partial meta", async () => {
+    const hr = await hrLogin();
+    const r = await fetch(`${base}/api/v1/employees/team`, { headers: { authorization: `Bearer ${hr}` } });
+    expect(r.status).toBe(200);
+    const body = (await r.json()) as { meta: { partial: boolean; unavailable: string[] } };
+    expect(body.meta.partial).toBe(false);
+    expect(body.meta.unavailable).toEqual([]);
+  });
+
   it("two leased generators interleave without duplicates", async () => {
     const a = new Snowflake(11, () => 1_800_000_000_000);
     const b = new Snowflake(12, () => 1_800_000_000_000);

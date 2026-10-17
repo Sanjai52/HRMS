@@ -9,7 +9,7 @@ import {
 } from "@hrms/core";
 import { fencedWrite } from "../fenced.js";
 import { catalogPool } from "../db/pools.js";
-import { ownedShardPools, poolFor } from "../db/shards.js";
+import { ownedShardPools, partialMeta, poolFor } from "../db/shards.js";
 import { assertCatalogOpen, CatalogGateError, gateError } from "../catalog-gate.js";
 import { requireAuth, requireRoles, type AuthedRequest } from "../middleware/auth.js";
 import { searchLimit } from "../middleware/rate-limit.js";
@@ -197,6 +197,7 @@ employeesRouter.get("/team", requireAuth, requireRoles("MANAGER", "HR", "ADMIN")
     (owned[shard] ??= []).push(bucket);
   }
   const out: unknown[] = [];
+  const unavailable: string[] = [];
   if (roles.includes("MANAGER") && !roles.includes("HR") && !roles.includes("ADMIN")) {
     const me = await catalogPool.query("SELECT email_norm FROM users WHERE user_id = $1", [req.userId]);
     if (me.rows.length === 0) {
@@ -210,23 +211,31 @@ employeesRouter.get("/team", requireAuth, requireRoles("MANAGER", "HR", "ADMIN")
       return;
     }
     for (const { shard, pool } of ownedShardPools()) {
-      const r = await pool.query(
-        "SELECT employee_id, name, email, department, designation, status FROM employees WHERE manager_id = $1 AND bucket_id = ANY($2) ORDER BY name",
-        [myId, owned[shard] ?? []]
-      );
-      out.push(...r.rows);
+      try {
+        const r = await pool.query(
+          "SELECT employee_id, name, email, department, designation, status FROM employees WHERE manager_id = $1 AND bucket_id = ANY($2) ORDER BY name",
+          [myId, owned[shard] ?? []]
+        );
+        out.push(...r.rows);
+      } catch {
+        unavailable.push(shard);
+      }
     }
   } else {
     const department = typeof req.query.department === "string" ? req.query.department : null;
     for (const { shard, pool } of ownedShardPools()) {
-      const r = await pool.query(
-        "SELECT employee_id, name, email, department, designation, status FROM employees WHERE bucket_id = ANY($2) AND ($1::text IS NULL OR department = $1) ORDER BY name LIMIT 50",
-        [department, owned[shard] ?? []]
-      );
-      out.push(...r.rows);
+      try {
+        const r = await pool.query(
+          "SELECT employee_id, name, email, department, designation, status FROM employees WHERE bucket_id = ANY($2) AND ($1::text IS NULL OR department = $1) ORDER BY name LIMIT 50",
+          [department, owned[shard] ?? []]
+        );
+        out.push(...r.rows);
+      } catch {
+        unavailable.push(shard);
+      }
     }
   }
-  res.json({ success: true, data: out });
+  res.json({ success: true, data: out, meta: partialMeta(unavailable) });
 });
 
 async function shardRow(employeeId: string): Promise<{ shard: string; row: Record<string, unknown> } | null> {

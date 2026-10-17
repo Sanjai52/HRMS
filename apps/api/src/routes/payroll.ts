@@ -9,7 +9,7 @@ import { fencedWrite } from "../fenced.js";
 import { nextEventId } from "../ids.js";
 import { LeaseExpiredError } from "@hrms/core";
 import { catalogPool } from "../db/pools.js";
-import { ownedShardPools, poolFor } from "../db/shards.js";
+import { ownedShardPools, partialMeta, poolFor } from "../db/shards.js";
 import { requireAuth, requireRoles, type AuthedRequest } from "../middleware/auth.js";
 import { selfEmployeeId, shardFor, ownedBuckets } from "../directory/self.js";
 import { BullMqJobQueue } from "@hrms/core";
@@ -166,14 +166,19 @@ payrollRouter.get("/batches/:id", requireAuth, requireRoles("HR", "ADMIN"), asyn
   const owned = await ownedBuckets();
   const period = (b.rows[0] as { period: string }).period;
   const records: unknown[] = [];
+  const unavailable: string[] = [];
   for (const { shard, pool } of ownedShardPools()) {
-    const r = await pool.query(
-      "SELECT pr.*, e.name FROM payroll_records pr JOIN employees e ON e.employee_id = pr.employee_id WHERE pr.bucket_id = ANY($2) AND pr.period = $1 ORDER BY e.name LIMIT 200",
-      [period, owned[shard] ?? []]
-    );
-    records.push(...r.rows);
+    try {
+      const r = await pool.query(
+        "SELECT pr.*, e.name FROM payroll_records pr JOIN employees e ON e.employee_id = pr.employee_id WHERE pr.bucket_id = ANY($2) AND pr.period = $1 ORDER BY e.name LIMIT 200",
+        [period, owned[shard] ?? []]
+      );
+      records.push(...r.rows);
+    } catch {
+      unavailable.push(shard);
+    }
   }
-  res.json({ success: true, data: { batch: b.rows[0], records } });
+  res.json({ success: true, data: { batch: b.rows[0], records }, meta: partialMeta(unavailable) });
 });
 
 payrollRouter.get("/me", requireAuth, async (req: AuthedRequest, res) => {

@@ -46,7 +46,8 @@ describe("Phase 7 sourcing crawler", () => {
 
     const pool = await fetch(`${base}/api/v1/recruitment/candidates?q=nila.fernando`, { headers: { authorization: `Bearer ${hr}` } });
     expect(pool.status).toBe(200);
-    const poolBody = (await pool.json()) as { data: Array<{ email: string; source: string }> };
+    const poolBody = (await pool.json()) as { data: Array<{ email: string; source: string }>; meta: { partial: boolean; unavailable: string[] } };
+    expect(poolBody.meta.partial).toBe(false);
     expect(poolBody.data.some((c) => c.email === "nila.fernando@example.com" && c.source === "portal")).toBe(true);
 
     const again = await startRun(hr, []);

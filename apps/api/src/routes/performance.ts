@@ -8,7 +8,7 @@ import { fencedWrite } from "../fenced.js";
 import { nextEventId } from "../ids.js";
 import { LeaseExpiredError } from "@hrms/core";
 import { catalogPool } from "../db/pools.js";
-import { ownedShardPools, type ShardPool } from "../db/shards.js";
+import { ownedShardPools, partialMeta, type ShardPool } from "../db/shards.js";
 import { requireAuth, requireRoles, type AuthedRequest } from "../middleware/auth.js";
 import { selfEmployeeId, shardFor, ownedBuckets } from "../directory/self.js";
 import { writeAudit } from "../audit/audit.js";
@@ -337,15 +337,20 @@ performanceRouter.get("/team", requireAuth, requireRoles("MANAGER", "HR", "ADMIN
   const cycleId = typeof req.query.cycleId === "string" ? req.query.cycleId : null;
   const owned = await ownedBuckets();
   const out: unknown[] = [];
+  const unavailable: string[] = [];
   const me = await selfEmployeeId(req);
   for (const { shard, pool } of ownedShardPools()) {
-    const r = await pool.query(
-      "SELECT r.*, e.name AS employee_name FROM reviews r JOIN employees e ON e.employee_id = r.employee_id WHERE r.bucket_id = ANY($3) AND ($1::text IS NULL OR r.cycle_id = $1) AND ($2::text IS NULL OR e.manager_id = $2) ORDER BY r.submitted_at DESC NULLS LAST LIMIT 50",
-      [cycleId, (req.roles ?? []).some((x) => x === "HR" || x === "ADMIN") ? null : me, owned[shard] ?? []]
-    );
-    out.push(...r.rows);
+    try {
+      const r = await pool.query(
+        "SELECT r.*, e.name AS employee_name FROM reviews r JOIN employees e ON e.employee_id = r.employee_id WHERE r.bucket_id = ANY($3) AND ($1::text IS NULL OR r.cycle_id = $1) AND ($2::text IS NULL OR e.manager_id = $2) ORDER BY r.submitted_at DESC NULLS LAST LIMIT 50",
+        [cycleId, (req.roles ?? []).some((x) => x === "HR" || x === "ADMIN") ? null : me, owned[shard] ?? []]
+      );
+      out.push(...r.rows);
+    } catch {
+      unavailable.push(shard);
+    }
   }
-  res.json({ success: true, data: out });
+  res.json({ success: true, data: out, meta: partialMeta(unavailable) });
 });
 
 performanceRouter.get("/summary", requireAuth, requireRoles("HR", "ADMIN"), async (req, res) => {
@@ -354,13 +359,18 @@ performanceRouter.get("/summary", requireAuth, requireRoles("HR", "ADMIN"), asyn
   let reviews = 0;
   let released = 0;
   const dist: Record<string, number> = {};
+  const unavailable: string[] = [];
   for (const { shard, pool } of ownedShardPools()) {
-    const r = await pool.query("SELECT status, rating FROM reviews WHERE bucket_id = ANY($2) AND ($1::text IS NULL OR cycle_id = $1)", [cycleId, owned[shard] ?? []]);
-    for (const row of r.rows as Array<{ status: string; rating: number | null }>) {
-      reviews += 1;
-      if (row.status === "RELEASED") released += 1;
-      if (row.rating) dist[String(row.rating)] = (dist[String(row.rating)] ?? 0) + 1;
+    try {
+      const r = await pool.query("SELECT status, rating FROM reviews WHERE bucket_id = ANY($2) AND ($1::text IS NULL OR cycle_id = $1)", [cycleId, owned[shard] ?? []]);
+      for (const row of r.rows as Array<{ status: string; rating: number | null }>) {
+        reviews += 1;
+        if (row.status === "RELEASED") released += 1;
+        if (row.rating) dist[String(row.rating)] = (dist[String(row.rating)] ?? 0) + 1;
+      }
+    } catch {
+      unavailable.push(shard);
     }
   }
-  res.json({ success: true, data: { reviews, released, completion: reviews > 0 ? Math.round((released / reviews) * 100) : 0, distribution: dist } });
+  res.json({ success: true, data: { reviews, released, completion: reviews > 0 ? Math.round((released / reviews) * 100) : 0, distribution: dist }, meta: partialMeta(unavailable) });
 });

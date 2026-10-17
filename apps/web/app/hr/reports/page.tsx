@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { AppShell } from "../../../components/app-shell";
 import { Card, SkeletonRows, StatusPill } from "../../../components/ui";
-import { authed } from "../../../lib/hr";
+import { authedMeta } from "../../../lib/hr";
 
 interface Overview {
   month: string;
@@ -17,12 +17,14 @@ const FLOW = ["APPLIED", "SCREENING", "SHORTLISTED", "ASSESSMENT", "INTERVIEW", 
 
 export default function ReportsPage() {
   const [d, setD] = useState<Overview | null>(null);
+  const [partial, setPartial] = useState<string[]>([]);
   const [state, setState] = useState<"loading" | "error" | "ready">("loading");
 
   useEffect(() => {
-    authed<Overview>("/api/v1/reports/overview")
-      .then((data) => {
-        setD(data);
+    authedMeta<Overview>("/api/v1/reports/overview")
+      .then((body) => {
+        setD(body.data);
+        setPartial(body.meta?.partial ? body.meta.unavailable ?? [] : []);
         setState("ready");
       })
       .catch(() => setState("error"));
@@ -39,6 +41,11 @@ export default function ReportsPage() {
       )}
       {state === "ready" && d && (
         <div className="grid max-w-4xl gap-6">
+          {partial.length > 0 && (
+            <p role="status" className="rounded-card border border-arches/40 bg-arches/10 px-4 py-2 text-sm font-medium text-hof">
+              Partial results — unavailable: {partial.join(", ")}. Healthy records are complete.
+            </p>
+          )}
           <div className="grid gap-4 sm:grid-cols-2">
             <Card className="p-5">
               <p className="text-sm font-medium text-foggy">People</p>

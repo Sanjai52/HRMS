@@ -10,7 +10,7 @@ import { fencedWrite } from "../fenced.js";
 export const attendanceRouter = Router();
 import { nextEventId } from "../ids.js";
 import { LeaseExpiredError } from "@hrms/core";
-import { ownedShardPools } from "../db/shards.js";
+import { ownedShardPools, partialMeta } from "../db/shards.js";
 import { requireAuth, requireRoles, type AuthedRequest } from "../middleware/auth.js";
 import { selfEmployeeId, shardFor, ownedBuckets } from "../directory/self.js";
 
@@ -141,5 +141,5 @@ attendanceRouter.get("/day", requireAuth, requireRoles("HR", "ADMIN"), async (re
       partial.push(shard);
     }
   }
-  res.json({ success: true, data: rows, meta: partial.length > 0 ? { partial: true, unavailable: partial } : { partial: false } });
+  res.json({ success: true, data: rows, meta: partialMeta(partial) });
 });

@@ -131,7 +131,9 @@ describe("Phase 8 performance", () => {
     expect(nBody.data.some((n) => n.title === "Review released")).toBe(true);
 
     const summary = await fetch(`${base}/api/v1/performance/summary?cycleId=${c.cycleId}`, { headers: { authorization: `Bearer ${hr}` } });
-    const sBody = (await summary.json()) as { data: { reviews: number; released: number; completion: number; distribution: Record<string, number> } };
+    const sBody = (await summary.json()) as { data: { reviews: number; released: number; completion: number; distribution: Record<string, number> }; meta: { partial: boolean; unavailable: string[] } };
+    expect(sBody.meta.partial).toBe(false);
+    expect(sBody.meta.unavailable).toEqual([]);
     expect(sBody.data.reviews).toBe(1);
     expect(sBody.data.released).toBe(1);
     expect(sBody.data.completion).toBe(100);

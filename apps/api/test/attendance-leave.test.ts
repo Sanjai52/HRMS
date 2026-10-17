@@ -244,4 +244,19 @@ describe("Phase 4 attendance and leave", () => {
     expect(balBody.data.find((b) => b.leave_type === "CASUAL")?.used_days).toBe(0);
     void req;
   });
+
+  it("scatter-gather reads expose a healthy partial meta", async () => {
+    const hr = await hrLogin();
+    const day = await fetch(`${base}/api/v1/attendance/day`, { headers: { authorization: `Bearer ${hr}` } });
+    expect(day.status).toBe(200);
+    const dayBody = (await day.json()) as { meta: { partial: boolean; unavailable: string[] } };
+    expect(dayBody.meta.partial).toBe(false);
+    expect(dayBody.meta.unavailable).toEqual([]);
+
+    const list = await fetch(`${base}/api/v1/leave/requests`, { headers: { authorization: `Bearer ${hr}` } });
+    expect(list.status).toBe(200);
+    const listBody = (await list.json()) as { meta: { partial: boolean; unavailable: string[] } };
+    expect(listBody.meta.partial).toBe(false);
+    expect(listBody.meta.unavailable).toEqual([]);
+  });
 });

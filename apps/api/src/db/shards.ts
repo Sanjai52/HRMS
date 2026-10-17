@@ -25,3 +25,8 @@ export function ownedShardPools(): Array<{ shard: string; pool: ShardPool }> {
 export function allShardPools(): Array<{ shard: string; pool: ShardPool }> {
   return Object.entries(shardPools).map(([shard, pool]) => ({ shard, pool }));
 }
+
+/** Meta for a scatter-gather read: always present, `partial` when any shard failed. */
+export function partialMeta(unavailable: string[]): { partial: boolean; unavailable: string[] } {
+  return { partial: unavailable.length > 0, unavailable };
+}

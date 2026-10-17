@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { catalogPool } from "../db/pools.js";
-import { ownedShardPools } from "../db/shards.js";
+import { ownedShardPools, partialMeta } from "../db/shards.js";
 import { requireAuth, requireRoles } from "../middleware/auth.js";
 import { ownedBuckets } from "../directory/self.js";
 
@@ -15,6 +15,7 @@ reportsRouter.get("/overview", requireAuth, requireRoles("HR", "ADMIN"), async (
   );
 
   const attendance = { present: 0, late: 0, records: 0 };
+  const unavailable: string[] = [];
   for (const { shard, pool } of ownedShardPools()) {
     try {
       const r = await pool.query(
@@ -27,7 +28,7 @@ reportsRouter.get("/overview", requireAuth, requireRoles("HR", "ADMIN"), async (
         if (row.status === "LATE") attendance.late += Number(row.n);
       }
     } catch {
-      // unhealthy shard contributes nothing; laid out per-shard elsewhere
+      unavailable.push(shard);
     }
   }
 
@@ -39,7 +40,7 @@ reportsRouter.get("/overview", requireAuth, requireRoles("HR", "ADMIN"), async (
         leave[row.status] = (leave[row.status] ?? 0) + Number(row.n);
       }
     } catch {
-      // skip
+      unavailable.push(shard);
     }
   }
 
@@ -60,9 +61,9 @@ reportsRouter.get("/overview", requireAuth, requireRoles("HR", "ADMIN"), async (
         funnel[row.stage] = (funnel[row.stage] ?? 0) + Number(row.n);
       }
     } catch {
-      // skip
+      unavailable.push(shard);
     }
   }
 
-  res.json({ success: true, data: { month, headcount: headcount.rows, attendance, leave, payroll: payroll.rows, funnel } });
+  res.json({ success: true, data: { month, headcount: headcount.rows, attendance, leave, payroll: payroll.rows, funnel }, meta: partialMeta(unavailable) });
 });

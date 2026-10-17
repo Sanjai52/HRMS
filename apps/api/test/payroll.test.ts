@@ -95,7 +95,9 @@ describe("Phase 5 payroll", () => {
     expect(Number.isInteger(rec.net_paise)).toBe(true);
 
     const detail = await fetch(`${base}/api/v1/payroll/batches/${data.batchId}`, { headers: { authorization: `Bearer ${hr}` } });
-    const detailBody = (await detail.json()) as { data: { batch: { status: string }; records: Array<{ record_id: string }> } };
+    const detailBody = (await detail.json()) as { data: { batch: { status: string }; records: Array<{ record_id: string }> }; meta: { partial: boolean; unavailable: string[] } };
+    expect(detailBody.meta.partial).toBe(false);
+    expect(detailBody.meta.unavailable).toEqual([]);
     const before = detailBody.data.records.filter((r) => r.record_id === rec.record_id).length;
     expect(before).toBe(1);
 

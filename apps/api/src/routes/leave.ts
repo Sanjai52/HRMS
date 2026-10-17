@@ -10,7 +10,7 @@ import { fencedWrite } from "../fenced.js";
 import { nextEventId } from "../ids.js";
 import { LeaseExpiredError } from "@hrms/core";
 import { catalogPool } from "../db/pools.js";
-import { ownedShardPools, type ShardPool } from "../db/shards.js";
+import { ownedShardPools, partialMeta, type ShardPool } from "../db/shards.js";
 import { requireAuth, requireRoles, type AuthedRequest } from "../middleware/auth.js";
 import { selfEmployeeId, shardFor, ownedBuckets } from "../directory/self.js";
 
@@ -190,7 +190,7 @@ leaveRouter.get("/requests", requireAuth, async (req: AuthedRequest, res) => {
       partial.push(shard);
     }
   }
-  res.json({ success: true, data: out, meta: partial.length > 0 ? { partial: true, unavailable: partial } : { partial: false } });
+  res.json({ success: true, data: out, meta: partialMeta(partial) });
 });
 
 async function decide(

@@ -1,6 +1,11 @@
 const base = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:4000";
 
-export async function authed<T>(path: string, token?: string, init?: RequestInit): Promise<T> {
+export interface ResponseMeta {
+  partial?: boolean;
+  unavailable?: string[];
+}
+
+async function request<T>(path: string, token?: string, init?: RequestInit): Promise<{ data: T; meta?: ResponseMeta }> {
   const t = token ?? (typeof window !== "undefined" ? sessionStorage.getItem("hrms_token") : null);
   const csrf = typeof window !== "undefined" ? sessionStorage.getItem("hrms_csrf") : null;
   const res = await fetch(`${base}${path}`, {
@@ -19,7 +24,16 @@ export async function authed<T>(path: string, token?: string, init?: RequestInit
     const body = await res.json().catch(() => null);
     throw new Error(body?.error?.message ?? `request-failed:${res.status}`);
   }
-  return ((await res.json()) as { data: T }).data;
+  return (await res.json()) as { data: T; meta?: ResponseMeta };
+}
+
+export async function authed<T>(path: string, token?: string, init?: RequestInit): Promise<T> {
+  return (await request<T>(path, token, init)).data;
+}
+
+/** Like `authed`, but returns the response meta too (for partial-result banners). */
+export async function authedMeta<T>(path: string, token?: string, init?: RequestInit): Promise<{ data: T; meta?: ResponseMeta }> {
+  return request<T>(path, token, init);
 }
 
 export function fmtDay(iso: string | null | undefined): string {
