@@ -19,6 +19,8 @@ import {
   Database,
   Heartbeat,
   Scroll,
+  UserGear,
+  ShieldCheck,
 } from "@phosphor-icons/react";
 import { cn } from "../lib/cn";
 import { rolesOf } from "../lib/api";
@@ -35,6 +37,8 @@ const NAV = [
   { label: "Settings", href: "/settings", icon: Gear, roles: ["ADMIN"] },
   { label: "Shards", href: "/admin/shards", icon: Database, roles: ["ADMIN"] },
   { label: "System health", href: "/admin/system-health", icon: Heartbeat, roles: ["ADMIN"] },
+  { label: "Users & roles", href: "/admin/users", icon: UserGear, roles: ["ADMIN"] },
+  { label: "Roles", href: "/admin/roles", icon: ShieldCheck, roles: ["ADMIN"] },
   { label: "Audit log", href: "/admin/audit-logs", icon: Scroll, roles: ["ADMIN"] },
 ] as const;
 

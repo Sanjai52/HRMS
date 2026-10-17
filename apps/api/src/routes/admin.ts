@@ -7,6 +7,7 @@ import { requireAuth, requireRoles, type AuthedRequest } from "../middleware/aut
 import { writeAudit } from "../audit/audit.js";
 import { assertCatalogOpen, CatalogGateError, gateError } from "../catalog-gate.js";
 import { previewNewShard, estimateMoves, startMigration, abortRun, allowedNewShard } from "../migration/runner.js";
+import { destroyUserSessions } from "../auth/sessions.js";
 
 export const adminRouter = Router();
 
@@ -229,4 +230,114 @@ adminRouter.post("/settings/designations", requireAuth, requireRoles("HR", "ADMI
     client.release();
   }
   res.status(201).json({ success: true, data: { name: name.trim() } });
+});
+
+const VALID_ROLES = ["EMPLOYEE", "MANAGER", "HR", "ADMIN"];
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+adminRouter.get("/users", requireAuth, requireRoles("ADMIN"), async (req, res) => {
+  const limit = Math.min(Math.max(Number(req.query.limit ?? 50) || 50, 1), 100);
+  const offset = Math.max(Number(req.query.offset ?? 0) || 0, 0);
+  const rows = await catalogPool.query(
+    `SELECT u.user_id, u.email, u.status, (u.status = 'ACTIVE') AS is_active, u.created_at, d.employee_id,
+            COALESCE(array_agg(ur.role ORDER BY ur.role) FILTER (WHERE ur.role IS NOT NULL), '{}') AS roles
+     FROM users u
+     LEFT JOIN user_roles ur ON ur.user_id = u.user_id
+     LEFT JOIN employee_directory d ON d.email_norm = u.email_norm
+     GROUP BY u.user_id, d.employee_id
+     ORDER BY u.created_at DESC, u.email_norm
+     LIMIT $1 OFFSET $2`,
+    [limit, offset]
+  );
+  const total = await catalogPool.query("SELECT count(*)::int AS c FROM users");
+  const counts = await catalogPool.query("SELECT role, count(*)::int AS c FROM user_roles GROUP BY role");
+  const roleCounts: Record<string, number> = Object.fromEntries(VALID_ROLES.map((r) => [r, 0]));
+  for (const row of counts.rows as Array<{ role: string; c: number }>) {
+    if (VALID_ROLES.includes(row.role)) roleCounts[row.role] = row.c;
+  }
+  res.json({ success: true, data: { users: rows.rows, total: (total.rows[0] as { c: number }).c, roleCounts, limit, offset } });
+});
+
+adminRouter.patch("/users/:id/roles", requireAuth, requireRoles("ADMIN"), async (req: AuthedRequest, res) => {
+  const { roles } = req.body as { roles?: unknown };
+  if (!UUID_RE.test(req.params.id)) {
+    res.status(404).json(errorEnvelope("NOT_FOUND", "User not found"));
+    return;
+  }
+  if (!Array.isArray(roles) || roles.length === 0 || !roles.every((r) => typeof r === "string" && VALID_ROLES.includes(r))) {
+    res.status(400).json(errorEnvelope("VALIDATION_ERROR", "roles must be a non-empty subset of EMPLOYEE, MANAGER, HR, ADMIN"));
+    return;
+  }
+  if (req.params.id.toLowerCase() === (req.userId ?? "").toLowerCase()) {
+    res.status(400).json(errorEnvelope("SELF_EDIT", "You cannot change your own roles"));
+    return;
+  }
+  const next = [...new Set(roles as string[])];
+  const client = await catalogPool.connect();
+  try {
+    await client.query("BEGIN");
+    await assertCatalogOpen(client);
+    const user = await client.query("SELECT user_id FROM users WHERE user_id = $1 FOR UPDATE", [req.params.id]);
+    if (user.rows.length === 0) {
+      await client.query("ROLLBACK");
+      res.status(404).json(errorEnvelope("NOT_FOUND", "User not found"));
+      return;
+    }
+    await client.query("DELETE FROM user_roles WHERE user_id = $1", [req.params.id]);
+    for (const role of next) {
+      await client.query("INSERT INTO user_roles (user_id, role) VALUES ($1, $2)", [req.params.id, role]);
+    }
+    await writeAudit({ query: client.query.bind(client) }, {
+      actor: req.userId ?? "",
+      action: "admin.roles_changed",
+      resource: `user:${req.params.id}`,
+      metadata: { roles: next },
+    });
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    if (e instanceof CatalogGateError) {
+      gateError(res);
+      return;
+    }
+    throw e;
+  } finally {
+    client.release();
+  }
+  res.json({ success: true, data: { userId: req.params.id, roles: next } });
+});
+
+adminRouter.post("/users/:id/deactivate", requireAuth, requireRoles("ADMIN"), async (req: AuthedRequest, res) => {
+  if (!UUID_RE.test(req.params.id)) {
+    res.status(404).json(errorEnvelope("NOT_FOUND", "User not found"));
+    return;
+  }
+  const client = await catalogPool.connect();
+  try {
+    await client.query("BEGIN");
+    await assertCatalogOpen(client);
+    const r = await client.query("UPDATE users SET status = 'DEACTIVATED' WHERE user_id = $1 RETURNING user_id", [req.params.id]);
+    if (r.rows.length === 0) {
+      await client.query("ROLLBACK");
+      res.status(404).json(errorEnvelope("NOT_FOUND", "User not found"));
+      return;
+    }
+    await writeAudit({ query: client.query.bind(client) }, {
+      actor: req.userId ?? "",
+      action: "admin.user_deactivated",
+      resource: `user:${req.params.id}`,
+    });
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    if (e instanceof CatalogGateError) {
+      gateError(res);
+      return;
+    }
+    throw e;
+  } finally {
+    client.release();
+  }
+  await destroyUserSessions(req.params.id);
+  res.json({ success: true, data: { userId: req.params.id, is_active: false } });
 });
