@@ -68,7 +68,7 @@ export async function estimateMoves(moves: BucketMove[]): Promise<{ buckets: num
   return { buckets: moves.length, rows };
 }
 
-async function setShardGates(shards: string[], state: "OPEN" | "GATED", epoch: number, casEpoch?: number): Promise<void> {
+export async function setShardGates(shards: string[], state: "OPEN" | "GATED", epoch: number, casEpoch?: number): Promise<void> {
   for (const shard of [...shards].sort()) {
     const pool = shardPools[shard];
     if (!pool) throw new Error(`unknown-shard:${shard}`);
@@ -250,6 +250,40 @@ export async function abortRun(runId: string, actor: string): Promise<{ reopened
   return { reopened };
 }
 
+/**
+ * Post-cutover smoke failure (Scenario K): the cutover is still the active map
+ * and the gates are GATED, but the moved data fails the smoke check. Revert the
+ * employee map to the pre-cutover version with a same-epoch CAS, record the
+ * ABORTED run, audit the smoke failure, and reopen the shard + catalog gates
+ * with the same-epoch CAS. A failed CAS (some other actor moved the epoch)
+ * leaves that gate as-is: recovery stays explicit.
+ */
+export async function revertAfterSmokeFailure(runId: string, actor: string, smokeError?: unknown): Promise<void> {
+  const r = await catalogPool.query("SELECT * FROM migration_runs WHERE run_id = $1", [runId]);
+  if (r.rows.length === 0) throw new Error("unknown-run");
+  const run = r.rows[0] as { epoch: number; from_version: number; to_version: number; moved_buckets: BucketMove[] };
+  const involved = [...new Set(run.moved_buckets.flatMap((m) => [m.from, m.to]))];
+  const message = smokeError === undefined ? "post-cutover smoke test failed" : String((smokeError as Error).message ?? smokeError);
+
+  // (1) Revert the employee active map only if the toVersion is still active.
+  await catalogPool.query(
+    "UPDATE routing_map_versions SET active = (version = $1) WHERE domain = 'employee' AND EXISTS (SELECT 1 FROM routing_map_versions WHERE version = $2 AND active)",
+    [run.from_version, run.to_version]
+  );
+  // (2) Record the terminal state.
+  await setRun(runId, { state: "ABORTED", current_step: "smoke_reverted", error: `smoke-failed: ${message}` });
+  // (3) Audit the smoke failure.
+  await writeAudit(catalogPool, { actor, action: "migration.smoke_failed", resource: `migration:${runId}`, metadata: { fromVersion: run.from_version, toVersion: run.to_version, error: message } });
+  // (4)+(5) Reopen the gates with the same-epoch CAS (as in abortRun, a CAS
+  // mismatch leaves the gate as-is rather than reopening implicitly).
+  try {
+    await setShardGates(involved, "OPEN", run.epoch, run.epoch);
+    await catalogPool.query("UPDATE catalog_write_gate SET state = 'OPEN' WHERE id = 1 AND state = 'GATED' AND epoch = $1", [run.epoch]);
+  } catch {
+    // gate CAS mismatch: the run is still recorded as ABORTED above
+  }
+}
+
 async function runMigration(runId: string, preview: Preview, epoch: number, actor: string): Promise<void> {
   const started = Date.now();
   const metrics: Record<string, unknown> = { movedBuckets: preview.moves.length };
@@ -293,7 +327,14 @@ async function runMigration(runId: string, preview: Preview, epoch: number, acto
       "map"
     );
     await setRun(runId, { state: "ACKED" });
-    await smokeMoved(preview.moves, preview.toVersion);
+    try {
+      await smokeMoved(preview.moves, preview.toVersion);
+    } catch (e) {
+      // Smoke failure after cutover: revert the map and reopen the gates
+      // instead of the generic FAILED path (Scenario K).
+      await revertAfterSmokeFailure(runId, actor, e);
+      return;
+    }
 
     await setRun(runId, { state: "WRITES_RESUMED", current_step: "resume" });
     await setShardGates(involved, "OPEN", epoch);
