@@ -1,9 +1,9 @@
 # Evaluation (measured only)
 
-Method: [00-method.md](experiments/00-method.md). Targets below were set after the pilot
-(2026-10-10) and are demo thresholds, not production SLOs. Smoke re-run on the current stack
-(2026-10-17, no bypass — no 429s observed): p95 9.75 ms, 0.00% failed, 100% checks (121/121)
-([smoke-r1.txt](experiments/raw/smoke-r1.txt)).
+Method: [00-method.md](experiments/00-method.md). Demo targets are the scripted acceptance
+thresholds given under Workload results — project targets, not production SLOs (PRD §20.5).
+Smoke re-run on the current stack (2026-10-17, no bypass — no 429s observed): p95 9.75 ms,
+0.00% failed, 100% checks (121/121) ([smoke-r1.txt](experiments/raw/smoke-r1.txt)).
 
 ## Workload results
 
@@ -23,18 +23,23 @@ Raw files: `mixed-{low,medium,high}-r{1,2,3}.txt`, `burst-r{1,2,3}.txt`. The
 `mixed-medium-r{1,2,3}` and `burst-r{1,2,3}` progress lines end with `✗` even though every JSON
 summary reports 0% failed and all final percentiles clear the scripted thresholds
 (`tests/load/mixed.js`: overall p95<2000/p99<4000 plus per-op thresholds; `tests/load/burst.js`:
-checkin p95<3000/p99<6000, failed<15%) — low and high raws show `✓`. The badge reflects
-incremental threshold evaluation during the run, not the final verdict; the JSON summaries
-(thresholds evaluate the same end-of-run data) are the record.
+checkin p95<3000/p99<6000, failed<15%). Cause: a k6 progress-bar bug in the ramping-arrival-rate
+executor (k6 issue #2951, fixed after v2.2.0) — when the executor finishes just before its
+nominal duration, the final bar is set from a progress snapshot with p<1 without consulting
+thresholds; those raws end at `3m58.8–3m58.9s/4m0s` (medium) and `1m19.9s/1m20s` (burst), while
+the `✓` runs (low `3m0s`, high `6m0s`) completed their full duration. The end-of-run JSON
+summaries are the record.
 
-(Targets: low p95 < 500ms, medium p95 < 1000ms, high p95 < 2000ms, burst failed < 15%.)
-Medians are inside all four targets (71 ms, 117 ms, 41 ms; burst failed 0%).
+(Project targets are the thresholds the load scripts enforce: overall p95<2000 ms / p99<4000 ms
+(`tests/load/mixed.js:29`); 9 AM burst `http_req_failed`<15% and check-in p95<3000 ms / p99<6000 ms
+(`tests/load/burst.js:23-24`). Measured medians: low 71 ms, medium 117 ms, high 41 ms p95; burst
+failed 0% — all clear.)
 
 ## Component comparisons (fair baselines)
 
 | Comparison | Result |
 |---|---|
-| Consistent hashing vs modulo (20k keys, add node) | ring 25.1% remap vs modulo 74.2%; owners ~even (5019/4312/5778/4891). Physical rows moved in the shard-4 migration: 64 buckets, 134 rows verified by checksum. |
+| Consistent hashing vs modulo (20k keys, add node) | `bench-ring-r{1,2,3}.txt`: ringRemapPct 25.4 / 24.9 / 24.8 → median 24.9% [24.8–25.4%]; moduloRemapPct 74.4 / 74.5 / 74.4 → median 74.4% [74.4–74.5%]. Ring owners after add (shard-1 / 2 / 3 / 4): 5846 / 5830 / 5829 → 5830 [5829–5846]; 4114 / 4289 / 4221 → 4221 [4114–4289]; 4952 / 4905 / 4998 → 4952 [4905–4998]; 5088 / 4976 / 4952 → 4976 [4952–5088]. The shard-4 migration run is recorded under Failure scenarios. |
 | Autocomplete Redis vs indexed catalog | `bench-suggest-r{1,2,3}.txt` (60 cold + 60 warm queries per run, GAP_MS=1100 pacing ≈0.9 req/s): cold `baselineIndexedCatalog` p50 25.08 / 24.79 / 24.63 ms, p95 32.40 / 26.99 / 26.98; warm `redisPrefixCache` p50 25.01 / 24.62 / 24.85, p95 26.69 / 26.76 / 26.60. Both legs report `sources: ["catalog"]` (avgResults 1.3) — the prefix cache never served in this stack state, so the measured delta is catalog-vs-catalog, not cache-vs-catalog. |
 | Write-fence overhead vs benchmark-only control | `bench-fence-r{1,2,3}.txt` (single-row UPDATE on shard-1 `bench_probe`, 200 iters per internal run; 3 internal runs per file): overheadPct 37.6 / 21.5 / 12.8 (r1), −3.9 / 35 / 24.2 (r2), 25 / 22.7 / 24.2 (r3) → median 24.2% [−3.9–37.6%]. `fencedMs` p50 6.26–7.18 ms vs `bareMs` p50 5.04–7.47 (p95 8.22–20.01 vs 7.88–19.12) — fence cost is within run-to-run noise at this scale (one negative reading). |
 | Rate limiter under overload | `ratelimit-r{1,2,3}.txt` (bad-credential login, 40 iters/s × 60s, no bypass): rejected_429 2351 / 2367 / 2369 of 2400 / 2400 / 2401 requests → rejection_rate 0.980 / 0.986 / 0.987 (median 0.986 [0.980–0.987]); login-tag p50 3 ms / p95 5 ms all runs; only 401/429 observed — the endpoint held. |
