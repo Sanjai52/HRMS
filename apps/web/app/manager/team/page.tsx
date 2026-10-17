@@ -43,7 +43,11 @@ export default function TeamPage() {
             </p>
           )}
           {rows.map((r) => (
-            <div key={r.employee_id} className="flex items-center gap-4 px-5 py-4">
+            <Link
+              key={r.employee_id}
+              href={`/manager/team/${r.employee_id}`}
+              className="flex items-center gap-4 px-5 py-4 outline-none transition duration-200 hover:bg-pearl/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-hof/40 active:scale-[0.98]"
+            >
               <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-rausch/10 text-sm font-extrabold text-rausch-dark">
                 {r.name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase()}
               </span>
@@ -52,7 +56,7 @@ export default function TeamPage() {
                 <p className="truncate text-sm text-foggy">{r.designation} · {r.department}</p>
               </div>
               <StatusPill status={r.status} />
-            </div>
+            </Link>
           ))}
         </Card>
       )}

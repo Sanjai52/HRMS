@@ -5,6 +5,7 @@ import { useState, useRef, useEffect, type ReactNode } from "react";
 import {
   House,
   Users,
+  UsersThree,
   CalendarCheck,
   Suitcase,
   Wallet,
@@ -25,56 +26,89 @@ import {
 import { cn } from "../lib/cn";
 import { rolesOf } from "../lib/api";
 
-const NAV = [
-  { label: "Dashboard", href: "/dashboard", icon: House, roles: ["EMPLOYEE", "MANAGER", "HR", "ADMIN"] },
-  { label: "Employees", href: "/hr/employees", icon: Users, roles: ["MANAGER", "HR", "ADMIN"] },
-  { label: "Attendance", href: "/attendance", icon: CalendarCheck, roles: ["EMPLOYEE", "MANAGER", "HR", "ADMIN"] },
-  { label: "Leave", href: "/leave", icon: Suitcase, roles: ["EMPLOYEE", "MANAGER", "HR", "ADMIN"] },
-  { label: "Payroll", href: "/payroll", icon: Wallet, roles: ["HR", "ADMIN"] },
-  { label: "Recruitment", href: "/hr/recruitment", icon: Briefcase, roles: ["HR", "ADMIN"] },
-  { label: "Performance", href: "/performance", icon: ChartLineUp, roles: ["EMPLOYEE", "MANAGER", "HR", "ADMIN"] },
-  { label: "Reports", href: "/hr/reports", icon: ChartLineUp, roles: ["HR", "ADMIN"] },
-  { label: "Settings", href: "/settings", icon: Gear, roles: ["ADMIN"] },
-  { label: "Shards", href: "/admin/shards", icon: Database, roles: ["ADMIN"] },
-  { label: "System health", href: "/admin/system-health", icon: Heartbeat, roles: ["ADMIN"] },
+const ALL_ROLES = ["EMPLOYEE", "MANAGER", "HR", "ADMIN"];
+
+interface NavItem {
+  label: string;
+  href: string;
+  icon: typeof House;
+  roles: readonly string[];
+}
+
+/** Role-aware sidebar shape (Task 17, R3): HR/ADMIN point at the management pages,
+ *  everyone else at their self-service pages. */
+function navFor(roles: string[]): NavItem[] {
+  const management = roles.includes("HR") || roles.includes("ADMIN");
+  const items: NavItem[] = [
+    { label: "Dashboard", href: "/dashboard", icon: House, roles: ALL_ROLES },
+  ];
+  if (roles.includes("MANAGER")) {
+    items.push({ label: "My team", href: "/manager/team", icon: UsersThree, roles: ["MANAGER"] });
+  }
+  items.push(
+    { label: "Employees", href: "/hr/employees", icon: Users, roles: ["MANAGER", "HR", "ADMIN"] },
+    { label: "Attendance", href: management ? "/hr/attendance" : "/attendance", icon: CalendarCheck, roles: ALL_ROLES },
+    { label: "Leave", href: management ? "/hr/leave" : "/leave", icon: Suitcase, roles: ALL_ROLES },
+    { label: "Payroll", href: management ? "/hr/payroll" : "/payroll", icon: Wallet, roles: ALL_ROLES },
+    { label: "Recruitment", href: "/hr/recruitment", icon: Briefcase, roles: ["HR", "ADMIN"] },
+    { label: "Performance", href: management ? "/hr/performance" : "/performance", icon: ChartLineUp, roles: ALL_ROLES },
+    { label: "Reports", href: "/hr/reports", icon: ChartLineUp, roles: ["HR", "ADMIN"] },
+    { label: "Settings", href: "/settings", icon: Gear, roles: ["ADMIN"] }
+  );
+  return items;
+}
+
+const ADMIN_NAV: NavItem[] = [
   { label: "Users & roles", href: "/admin/users", icon: UserGear, roles: ["ADMIN"] },
   { label: "Roles", href: "/admin/roles", icon: ShieldCheck, roles: ["ADMIN"] },
   { label: "Audit log", href: "/admin/audit-logs", icon: Scroll, roles: ["ADMIN"] },
-] as const;
+  { label: "System health", href: "/admin/system-health", icon: Heartbeat, roles: ["ADMIN"] },
+  { label: "Shards", href: "/admin/shards", icon: Database, roles: ["ADMIN"] },
+];
 
-function visibleNav(): Array<(typeof NAV)[number]> {
-  if (typeof window === "undefined") return [...NAV];
-  const roles = rolesOf(sessionStorage.getItem("hrms_token"));
-  if (roles.length === 0) return [...NAV];
-  return NAV.filter((item) => item.roles.some((r) => roles.includes(r)));
+function isActive(pathname: string, href: string): boolean {
+  return pathname === href || pathname.startsWith(`${href}/`);
 }
 
-function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
+function NavLink({ item, active, onNavigate }: { item: NavItem; active: boolean; onNavigate?: () => void }) {
+  const Icon = item.icon;
+  return (
+    <Link
+      href={item.href}
+      onClick={onNavigate}
+      aria-current={active ? "page" : undefined}
+      className={cn(
+        "flex items-center gap-3 rounded-input px-3 py-2.5 text-[15px] transition",
+        active ? "bg-pearl font-semibold text-hof" : "text-foggy hover:bg-pearl hover:text-hof"
+      )}
+    >
+      <Icon size={20} weight={active ? "fill" : "regular"} />
+      {item.label}
+    </Link>
+  );
+}
+
+function Sidebar({ roles, onNavigate }: { roles: string[] | null; onNavigate?: () => void }) {
   const pathname = usePathname();
+  const items = roles === null ? [] : navFor(roles).filter((item) => item.roles.some((r) => roles.includes(r)));
+  const adminItems = roles === null ? [] : ADMIN_NAV.filter((item) => item.roles.some((r) => roles.includes(r)));
   return (
     <div className="flex h-full flex-col gap-1 p-4">
       <Link href="/dashboard" onClick={onNavigate} className="mb-4 flex items-center gap-2 px-2">
         <span className="grid h-9 w-9 place-items-center rounded-card bg-rausch text-lg font-black text-white">H</span>
         <span className="text-lg font-extrabold tracking-tight text-hof">HRMS</span>
       </Link>
-      {visibleNav().map(({ label, href, icon: Icon }) => {
-        const active = pathname === href;
-        return (
-          <Link
-            key={href}
-            href={href}
-            onClick={onNavigate}
-            aria-current={active ? "page" : undefined}
-            className={cn(
-              "flex items-center gap-3 rounded-input px-3 py-2.5 text-[15px] transition",
-              active ? "bg-pearl font-semibold text-hof" : "text-foggy hover:bg-pearl hover:text-hof"
-            )}
-          >
-            <Icon size={20} weight={active ? "fill" : "regular"} />
-            {label}
-          </Link>
-        );
-      })}
+      {items.map((item) => (
+        <NavLink key={item.href} item={item} active={isActive(pathname, item.href)} onNavigate={onNavigate} />
+      ))}
+      {adminItems.length > 0 && (
+        <div className="mt-4 flex flex-col gap-1">
+          <p className="px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-foggy">Admin</p>
+          {adminItems.map((item) => (
+            <NavLink key={item.href} item={item} active={isActive(pathname, item.href)} onNavigate={onNavigate} />
+          ))}
+        </div>
+      )}
       <div className="mt-auto border-t border-line-soft pt-3">
         <button
           onClick={() => {
@@ -92,6 +126,58 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
+function UserMenu() {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    function onPointerDown(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, []);
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        aria-label="Account menu"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="grid h-10 w-10 place-items-center rounded-full bg-hof text-sm font-bold text-white transition hover:bg-black"
+      >
+        H
+      </button>
+      {open && (
+        <div
+          role="menu"
+          aria-label="Account"
+          className="absolute right-0 top-12 w-48 overflow-hidden rounded-card border border-line-soft bg-white py-1 shadow-pop"
+        >
+          <Link
+            role="menuitem"
+            href="/profile"
+            onClick={() => setOpen(false)}
+            className="block px-4 py-2.5 text-sm font-medium text-hof transition hover:bg-pearl"
+          >
+            Profile
+          </Link>
+          <button
+            role="menuitem"
+            onClick={() => {
+              sessionStorage.removeItem("hrms_token");
+              sessionStorage.removeItem("hrms_csrf");
+              window.location.href = "/login";
+            }}
+            className="block w-full px-4 py-2.5 text-left text-sm font-medium text-hof transition hover:bg-pearl"
+          >
+            Log out
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface Suggestion {
   employeeId: string;
   name: string;
@@ -100,10 +186,15 @@ interface Suggestion {
 
 export function AppShell({ children, title }: { children: ReactNode; title: string }) {
   const [open, setOpen] = useState(false);
+  const [roles, setRoles] = useState<string[] | null>(null);
   const [q, setQ] = useState("");
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [showSuggest, setShowSuggest] = useState(false);
   const suggestTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    setRoles(rolesOf(sessionStorage.getItem("hrms_token")));
+  }, []);
 
   useEffect(() => {
     if (suggestTimer.current) clearTimeout(suggestTimer.current);
@@ -134,7 +225,7 @@ export function AppShell({ children, title }: { children: ReactNode; title: stri
   return (
     <div className="min-h-dvh bg-white">
       <aside className="fixed inset-y-0 left-0 hidden w-60 border-r border-line-soft lg:block">
-        <Sidebar />
+        <Sidebar roles={roles} />
       </aside>
 
       {open && (
@@ -148,7 +239,7 @@ export function AppShell({ children, title }: { children: ReactNode; title: stri
             >
               <X size={20} />
             </button>
-            <Sidebar onNavigate={() => setOpen(false)} />
+            <Sidebar roles={roles} onNavigate={() => setOpen(false)} />
           </aside>
         </div>
       )}
@@ -222,7 +313,7 @@ export function AppShell({ children, title }: { children: ReactNode; title: stri
             >
               <Bell size={20} />
             </Link>
-            <span className="grid h-10 w-10 place-items-center rounded-full bg-hof text-sm font-bold text-white">H</span>
+            <UserMenu />
           </div>
         </header>
         <main className="mx-auto max-w-7xl px-4 py-8 md:px-8">

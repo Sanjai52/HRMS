@@ -13,8 +13,9 @@ test.describe.serial("HRMS end to end", () => {
   test("HR logs in and sees live dashboard", async ({ page }) => {
     await uiLogin(page, "hr@hrms.local", "ChangeMe123!");
     await expect(page.getByRole("heading", { name: /good day/i })).toBeVisible();
-    await expect(page.getByText("People in your organization")).toBeVisible();
     await expect(page.getByText("Attendance today")).toBeVisible();
+    await expect(page.getByText("Latest payslip")).toBeVisible();
+    await expect(page.getByText("Unread notifications")).toBeVisible();
   });
 
   test("invitation acceptance creates an account", async ({ page, request }) => {
@@ -232,5 +233,32 @@ test.describe.serial("HRMS end to end", () => {
     await uiLogin(page, "hr@hrms.local", "ChangeMe123!");
     await page.goto("/admin/system-health");
     await expect(page.getByText(/restricted|databases/i)).toBeVisible({ timeout: 15000 });
+  });
+
+  test("profile menu navigates to /profile", async ({ page }) => {
+    await uiLogin(page, "hr@hrms.local", "ChangeMe123!");
+    await page.getByRole("button", { name: "Account menu" }).click();
+    await page.getByRole("menuitem", { name: "Profile" }).click();
+    await expect(page).toHaveURL(/\/profile$/, { timeout: 15000 });
+    await expect(page.getByRole("heading", { name: "My profile" })).toBeVisible({ timeout: 15000 });
+  });
+
+  test("admin navigation renders /admin/users", async ({ page, request }) => {
+    const hr = await hrToken(request);
+    const em = email("e2eadmin");
+    const create = await request.post(`${API}/api/v1/auth/invitations`, {
+      headers: { authorization: `Bearer ${hr}` },
+      data: { email: em, name: "E2E Admin", role: "ADMIN" },
+    });
+    expect(create.status()).toBe(201);
+    const { data } = (await create.json()) as { data: { token: string } };
+    const accept = await request.post(`${API}/api/v1/auth/accept`, { data: { token: data.token, password: "AdminPass1!" } });
+    expect(accept.status()).toBe(201);
+
+    await uiLogin(page, em, "AdminPass1!");
+    await page.getByRole("link", { name: "Users & roles" }).click();
+    await expect(page).toHaveURL(/\/admin\/users$/, { timeout: 15000 });
+    await expect(page.getByRole("heading", { name: "Users & roles" })).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText(/accounts · showing/)).toBeVisible({ timeout: 15000 });
   });
 });
