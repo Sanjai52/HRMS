@@ -1,6 +1,54 @@
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { Pool } from "pg";
+import { MIGRATION_MANIFEST } from "@hrms/core";
 
 const base = process.env.API_BASE ?? "http://localhost:4000";
+
+// The migration below cuts the employee map over to shard-4. Owned shards are
+// 1-3 (routes skip shard-4), so leaving that map active poisons every test file
+// that runs afterwards, and a later run would re-copy buckets over copies that
+// changed since, failing the checksum verify. Restore the pre-migration state:
+// reactivate the old map, delete the shard-4 copies it does not own, reopen
+// gates.
+let restoreActiveVersion: number | null = null;
+
+afterAll(async () => {
+  const catalogUrl = process.env.CATALOG_DATABASE_URL;
+  if (catalogUrl && restoreActiveVersion !== null) {
+    const catalog = new Pool({ connectionString: catalogUrl });
+    try {
+      await catalog.query("UPDATE routing_map_versions SET active = (version = $1) WHERE domain = 'employee'", [restoreActiveVersion]);
+      await catalog.query("UPDATE catalog_write_gate SET state = 'OPEN' WHERE id = 1");
+      const strays = await catalog.query("SELECT bucket_id FROM routing_map_buckets WHERE version = $1 AND shard_id <> 'shard-4'", [restoreActiveVersion]);
+      const strayBuckets = strays.rows.map((r) => (r as { bucket_id: number }).bucket_id);
+      const strayUrl = process.env.DATABASE_SHARD_4_URL;
+      if (strayBuckets.length > 0 && strayUrl) {
+        const strayPool = new Pool({ connectionString: strayUrl });
+        try {
+          for (const t of MIGRATION_MANIFEST) {
+            await strayPool.query(`DELETE FROM ${t.table} WHERE bucket_id = ANY($1)`, [strayBuckets]);
+          }
+        } finally {
+          await strayPool.end();
+        }
+      }
+    } finally {
+      await catalog.end();
+    }
+  }
+  for (let n = 1; n <= 4; n++) {
+    const shardUrl = process.env[`DATABASE_SHARD_${n}_URL`];
+    if (!shardUrl) continue;
+    const shard = new Pool({ connectionString: shardUrl });
+    try {
+      await shard.query("UPDATE shard_write_gate SET state = 'OPEN' WHERE id = 1");
+    } catch {
+      // best-effort cleanup; a missing gate table must not mask test results
+    } finally {
+      await shard.end();
+    }
+  }
+});
 
 async function hrLogin(): Promise<string> {
   const res = await fetch(`${base}/api/v1/auth/login`, {
@@ -56,6 +104,7 @@ describe("Phase 9 shard migration", () => {
     };
     const activeEmp = shards.data.versions.find((v) => v.domain === "employee" && v.active);
     expect(activeEmp).toBeDefined();
+    restoreActiveVersion = activeEmp!.version;
     if (activeEmp!.members.split(",").includes("shard-4")) {
       const dir = (await (await fetch(`${base}/api/v1/employees?limit=100`, { headers: { authorization: `Bearer ${adm}` } })).json()) as { data: unknown[] };
       expect(dir.data.length).toBeGreaterThan(0);
