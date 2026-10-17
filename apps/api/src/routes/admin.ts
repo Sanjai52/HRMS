@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { errorEnvelope, prefixesFor, suggestKey, suggestMember, AUTOCOMPLETE_TOP_K } from "@hrms/core";
-import { catalogPool, shardPools } from "../db/pools.js";
+import { catalogPool } from "../db/pools.js";
+import { allShardPools, ownedShardPools } from "../db/shards.js";
 import { redisKv } from "../db/redis.js";
 import { requireAuth, requireRoles, type AuthedRequest } from "../middleware/auth.js";
 import { writeAudit } from "../audit/audit.js";
@@ -37,8 +38,7 @@ adminRouter.post("/rebuild-directory", requireAuth, requireRoles("ADMIN"), async
     // Batch autocomplete writes into one pipeline: the sequential per-prefix
     // awaits cost thousands of roundtrips on a large directory.
     const autocomplete = redis.pipeline();
-    for (const [shardId, pool] of Object.entries(shardPools)) {
-      if (shardId === "shard-4") continue;
+    for (const { pool } of ownedShardPools()) {
       const rows = await pool.query("SELECT employee_id, email, name, department, designation, status, version FROM employees");
       for (const r of rows.rows as Array<{ employee_id: string; email: string; name: string; department: string; designation: string; status: string; version: number }>) {
         if (r.status === "ACTIVE") {
@@ -88,7 +88,7 @@ adminRouter.post("/rebuild-directory", requireAuth, requireRoles("ADMIN"), async
 adminRouter.get("/shards", requireAuth, requireRoles("ADMIN"), async (_req, res) => {
   const versions = await catalogPool.query("SELECT version, domain, members, active FROM routing_map_versions ORDER BY domain, version");
   const gates: Record<string, unknown> = {};
-  for (const [id, pool] of Object.entries(shardPools)) {
+  for (const { shard: id, pool } of allShardPools()) {
     try {
       const r = await pool.query("SELECT state, epoch FROM shard_write_gate WHERE id = 1");
       const counts = await pool.query("SELECT (SELECT COUNT(*) FROM employees) AS employees, (SELECT COUNT(*) FROM outbox_events WHERE delivered_at IS NULL) AS pending_outbox");

@@ -9,7 +9,8 @@ import {
 } from "@hrms/core";
 import { nextEventId } from "../ids.js";
 import { LeaseExpiredError } from "@hrms/core";
-import { catalogPool, shardPools } from "../db/pools.js";
+import { catalogPool } from "../db/pools.js";
+import { ownedShardPools, type ShardPool } from "../db/shards.js";
 import { requireAuth, requireRoles, type AuthedRequest } from "../middleware/auth.js";
 import { selfEmployeeId, shardFor, ownedBuckets } from "../directory/self.js";
 
@@ -161,8 +162,7 @@ leaveRouter.get("/requests", requireAuth, async (req: AuthedRequest, res) => {
   const owned = await ownedBuckets();
   const out: unknown[] = [];
   const partial: string[] = [];
-  for (const [shard, pool] of Object.entries(shardPools)) {
-    if (shard === "shard-4") continue;
+  for (const { shard, pool } of ownedShardPools()) {
     try {
       if (mineOnly) {
         const me = await selfEmployeeId(req);
@@ -207,9 +207,8 @@ async function decide(
   const roles = req.roles ?? [];
   const me = await selfEmployeeId(req);
   const owned = await ownedBuckets();
-  let found: { shard: string; pool: (typeof shardPools)[string]; row: LeaveRow } | null = null;
-  for (const [shard, pool] of Object.entries(shardPools)) {
-    if (shard === "shard-4") continue;
+  let found: { shard: string; pool: ShardPool; row: LeaveRow } | null = null;
+  for (const { shard, pool } of ownedShardPools()) {
     const r = await pool.query("SELECT * FROM leave_requests WHERE request_id = $1 AND bucket_id = ANY($2)", [req.params.id, owned[shard] ?? []]);
     if (r.rows.length > 0) {
       found = { shard, pool, row: r.rows[0] as LeaveRow };
@@ -336,9 +335,8 @@ leaveRouter.post("/requests/:id/cancel", requireAuth, async (req: AuthedRequest,
   const me = await selfEmployeeId(req);
   const roles = req.roles ?? [];
   const owned = await ownedBuckets();
-  let found: { pool: (typeof shardPools)[string]; row: LeaveRow } | null = null;
-  for (const [shard, pool] of Object.entries(shardPools)) {
-    if (shard === "shard-4") continue;
+  let found: { pool: ShardPool; row: LeaveRow } | null = null;
+  for (const { shard, pool } of ownedShardPools()) {
     const r = await pool.query("SELECT * FROM leave_requests WHERE request_id = $1 AND bucket_id = ANY($2)", [req.params.id, owned[shard] ?? []]);
     if (r.rows.length > 0) {
       found = { pool, row: r.rows[0] as LeaveRow };

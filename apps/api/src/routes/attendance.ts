@@ -10,7 +10,7 @@ import {
 export const attendanceRouter = Router();
 import { nextEventId } from "../ids.js";
 import { LeaseExpiredError } from "@hrms/core";
-import { catalogPool, shardPools } from "../db/pools.js";
+import { ownedShardPools } from "../db/shards.js";
 import { requireAuth, requireRoles, type AuthedRequest } from "../middleware/auth.js";
 import { selfEmployeeId, shardFor, ownedBuckets } from "../directory/self.js";
 
@@ -130,8 +130,7 @@ attendanceRouter.get("/day", requireAuth, requireRoles("HR", "ADMIN"), async (re
   const owned = await ownedBuckets();
   const rows: unknown[] = [];
   const partial: string[] = [];
-  for (const [shard, pool] of Object.entries(shardPools)) {
-    if (shard === "shard-4") continue;
+  for (const { shard, pool } of ownedShardPools()) {
     try {
       const r = await pool.query(
         "SELECT a.employee_id, a.workday, a.check_in, a.check_out, a.status, e.name, e.department FROM attendance a JOIN employees e ON e.employee_id = a.employee_id WHERE a.workday = $1::date AND a.bucket_id = ANY($2) ORDER BY e.name",

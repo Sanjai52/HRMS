@@ -11,7 +11,8 @@ import {
 } from "@hrms/core";
 import { nextEventId } from "../ids.js";
 import { LeaseExpiredError } from "@hrms/core";
-import { catalogPool, shardPools } from "../db/pools.js";
+import { catalogPool } from "../db/pools.js";
+import { ownedShardPools, poolFor, type ShardPool } from "../db/shards.js";
 import { requireAuth, requireRoles, type AuthedRequest } from "../middleware/auth.js";
 import { publicApplyLimit, shortLinkLimit } from "../middleware/rate-limit.js";
 import { writeAudit } from "../audit/audit.js";
@@ -23,15 +24,15 @@ export const applicationsRouter = Router();
 
 const CANDIDATE_DOMAIN = "candidate";
 
-async function candidatePool(candidateId: string): Promise<{ pool: (typeof shardPools)[string]; bucket: number; shard: string } | null> {
+async function candidatePool(candidateId: string): Promise<{ pool: ShardPool; bucket: number; shard: string } | null> {
   const { map } = await loadMapByDomain(catalogPool, CANDIDATE_DOMAIN);
   const bucket = stableEmployeeBucket(candidateId);
   const shard = map.get(bucket);
-  const pool = shard ? shardPools[shard] : undefined;
+  const pool = shard ? poolFor(shard) : undefined;
   return pool ? { pool, bucket, shard: shard as string } : null;
 }
 
-async function routeApplication(applicationId: string): Promise<{ pool: (typeof shardPools)[string]; bucket: number; candidateId: string; jobId: string } | null> {
+async function routeApplication(applicationId: string): Promise<{ pool: ShardPool; bucket: number; candidateId: string; jobId: string } | null> {
   const idx = await catalogPool.query("SELECT candidate_id, job_id FROM application_index WHERE application_id = $1", [applicationId]);
   if (idx.rows.length === 0) return null;
   const candidateId = (idx.rows[0] as { candidate_id: string }).candidate_id;
@@ -208,8 +209,7 @@ applicationsRouter.get("/candidates", requireAuth, requireRoles("HR", "ADMIN"), 
     (owned[shard] ??= []).push(bucket);
   }
   const out: unknown[] = [];
-  for (const [shard, pool] of Object.entries(shardPools)) {
-    if (shard === "shard-4") continue;
+  for (const { shard, pool } of ownedShardPools()) {
     const r = q
       ? await pool.query("SELECT candidate_id, name, email, source, created_at FROM candidates WHERE candidate_bucket_id = ANY($2) AND (name ILIKE $1 OR email LIKE $1) ORDER BY created_at DESC LIMIT 30", [`%${q}%`, owned[shard] ?? []])
       : await pool.query("SELECT candidate_id, name, email, source, created_at FROM candidates WHERE candidate_bucket_id = ANY($1) ORDER BY created_at DESC LIMIT 30", [owned[shard] ?? []]);
@@ -242,8 +242,7 @@ applicationsRouter.get("/applications", requireAuth, requireRoles("HR", "ADMIN")
     (owned[shard] ??= []).push(bucket);
   }
   const out: unknown[] = [];
-  for (const [shard, pool] of Object.entries(shardPools)) {
-    if (shard === "shard-4") continue;
+  for (const { shard, pool } of ownedShardPools()) {
     const r = await pool.query(
       "SELECT a.*, c.name AS candidate_name FROM applications a JOIN candidates c ON c.candidate_id = a.candidate_id WHERE a.candidate_bucket_id = ANY($3) AND ($1::text IS NULL OR a.job_id = $1) AND ($2::text IS NULL OR a.stage = $2) ORDER BY a.applied_at DESC LIMIT 50",
       [jobId, stage, owned[shard] ?? []]

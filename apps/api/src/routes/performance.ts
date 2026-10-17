@@ -7,7 +7,8 @@ import {
 } from "@hrms/core";
 import { nextEventId } from "../ids.js";
 import { LeaseExpiredError } from "@hrms/core";
-import { catalogPool, shardPools } from "../db/pools.js";
+import { catalogPool } from "../db/pools.js";
+import { ownedShardPools, type ShardPool } from "../db/shards.js";
 import { requireAuth, requireRoles, type AuthedRequest } from "../middleware/auth.js";
 import { selfEmployeeId, shardFor, ownedBuckets } from "../directory/self.js";
 import { writeAudit } from "../audit/audit.js";
@@ -174,9 +175,8 @@ performanceRouter.patch("/goals/:id", requireAuth, async (req: AuthedRequest, re
     return;
   }
   const owned = await ownedBuckets();
-  let found: { pool: (typeof shardPools)[string]; employeeId: string } | null = null;
-  for (const [shard, pool] of Object.entries(shardPools)) {
-    if (shard === "shard-4") continue;
+  let found: { pool: ShardPool; employeeId: string } | null = null;
+  for (const { shard, pool } of ownedShardPools()) {
     const r = await pool.query("SELECT employee_id FROM goals WHERE goal_id = $1 AND bucket_id = ANY($2)", [req.params.id, owned[shard] ?? []]);
     if (r.rows.length > 0) {
       found = { pool, employeeId: (r.rows[0] as { employee_id: string }).employee_id };
@@ -260,8 +260,7 @@ performanceRouter.post("/reviews", requireAuth, requireRoles("MANAGER", "HR", "A
 
 performanceRouter.post("/reviews/:id/submit", requireAuth, requireRoles("MANAGER", "HR", "ADMIN"), async (req: AuthedRequest, res) => {
   const owned = await ownedBuckets();
-  for (const [shard, pool] of Object.entries(shardPools)) {
-    if (shard === "shard-4") continue;
+  for (const { shard, pool } of ownedShardPools()) {
     try {
       const r = await withFencedWrite(pool, async (c) => {
         return c.query("UPDATE reviews SET status = 'SUBMITTED', submitted_at = now() WHERE review_id = $1 AND status = 'DRAFT' AND bucket_id = ANY($2) RETURNING review_id", [req.params.id, owned[shard] ?? []]);
@@ -283,8 +282,7 @@ performanceRouter.post("/reviews/:id/submit", requireAuth, requireRoles("MANAGER
 
 performanceRouter.post("/reviews/:id/release", requireAuth, requireRoles("HR", "ADMIN"), async (req: AuthedRequest, res) => {
   const owned = await ownedBuckets();
-  for (const [shard, pool] of Object.entries(shardPools)) {
-    if (shard === "shard-4") continue;
+  for (const { shard, pool } of ownedShardPools()) {
     try {
       const out = await withFencedWrite(pool, async (c) => {
         const r = await c.query("SELECT employee_id, bucket_id FROM reviews WHERE review_id = $1 AND status = 'SUBMITTED' AND bucket_id = ANY($2)", [req.params.id, owned[shard] ?? []]);
@@ -340,8 +338,7 @@ performanceRouter.get("/team", requireAuth, requireRoles("MANAGER", "HR", "ADMIN
   const owned = await ownedBuckets();
   const out: unknown[] = [];
   const me = await selfEmployeeId(req);
-  for (const [shard, pool] of Object.entries(shardPools)) {
-    if (shard === "shard-4") continue;
+  for (const { shard, pool } of ownedShardPools()) {
     const r = await pool.query(
       "SELECT r.*, e.name AS employee_name FROM reviews r JOIN employees e ON e.employee_id = r.employee_id WHERE r.bucket_id = ANY($3) AND ($1::text IS NULL OR r.cycle_id = $1) AND ($2::text IS NULL OR e.manager_id = $2) ORDER BY r.submitted_at DESC NULLS LAST LIMIT 50",
       [cycleId, (req.roles ?? []).some((x) => x === "HR" || x === "ADMIN") ? null : me, owned[shard] ?? []]
@@ -357,8 +354,7 @@ performanceRouter.get("/summary", requireAuth, requireRoles("HR", "ADMIN"), asyn
   let reviews = 0;
   let released = 0;
   const dist: Record<string, number> = {};
-  for (const [shard, pool] of Object.entries(shardPools)) {
-    if (shard === "shard-4") continue;
+  for (const { shard, pool } of ownedShardPools()) {
     const r = await pool.query("SELECT status, rating FROM reviews WHERE bucket_id = ANY($2) AND ($1::text IS NULL OR cycle_id = $1)", [cycleId, owned[shard] ?? []]);
     for (const row of r.rows as Array<{ status: string; rating: number | null }>) {
       reviews += 1;

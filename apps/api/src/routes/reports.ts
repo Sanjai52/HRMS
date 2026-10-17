@@ -1,5 +1,6 @@
 import { Router } from "express";
-import { catalogPool, shardPools } from "../db/pools.js";
+import { catalogPool } from "../db/pools.js";
+import { ownedShardPools } from "../db/shards.js";
 import { requireAuth, requireRoles } from "../middleware/auth.js";
 import { ownedBuckets } from "../directory/self.js";
 
@@ -14,8 +15,7 @@ reportsRouter.get("/overview", requireAuth, requireRoles("HR", "ADMIN"), async (
   );
 
   const attendance = { present: 0, late: 0, records: 0 };
-  for (const [shard, pool] of Object.entries(shardPools)) {
-    if (shard === "shard-4") continue;
+  for (const { shard, pool } of ownedShardPools()) {
     try {
       const r = await pool.query(
         "SELECT status, COUNT(*) AS n FROM attendance WHERE bucket_id = ANY($2) AND workday >= ($1 || '-01')::date AND workday < (($1 || '-01')::date + interval '1 month') GROUP BY status",
@@ -32,8 +32,7 @@ reportsRouter.get("/overview", requireAuth, requireRoles("HR", "ADMIN"), async (
   }
 
   const leave: Record<string, number> = {};
-  for (const [shard, pool] of Object.entries(shardPools)) {
-    if (shard === "shard-4") continue;
+  for (const { shard, pool } of ownedShardPools()) {
     try {
       const r = await pool.query("SELECT status, COUNT(*) AS n FROM leave_requests WHERE bucket_id = ANY($1) GROUP BY status", [owned[shard] ?? []]);
       for (const row of r.rows as Array<{ status: string; n: string }>) {
@@ -54,8 +53,7 @@ reportsRouter.get("/overview", requireAuth, requireRoles("HR", "ADMIN"), async (
   for (const row of cmapRows.rows as Array<{ bucket_id: number; shard_id: string }>) {
     (ownedC[row.shard_id] ??= []).push(row.bucket_id);
   }
-  for (const [shard, pool] of Object.entries(shardPools)) {
-    if (shard === "shard-4") continue;
+  for (const { shard, pool } of ownedShardPools()) {
     try {
       const r = await pool.query("SELECT stage, COUNT(*) AS n FROM applications WHERE candidate_bucket_id = ANY($1) GROUP BY stage", [ownedC[shard] ?? []]);
       for (const row of r.rows as Array<{ stage: string; n: string }>) {

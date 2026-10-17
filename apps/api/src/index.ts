@@ -1,7 +1,9 @@
 import "dotenv/config";
+import { createRequire } from "node:module";
 import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
+import { errorEnvelope } from "@hrms/core";
 import { authRouter } from "./routes/auth.js";
 import { employeesRouter } from "./routes/employees.js";
 import { attendanceRouter } from "./routes/attendance.js";
@@ -50,9 +52,50 @@ app.use(systemRouter);
 app.use(healthRouter);
 app.use(metricsRouter);
 
+// Map backend-availability failures to a retryable 503 instead of a bare 500.
+// pg surfaces these as Node socket errors (gateway/shard down) or SQLSTATEs
+// (57P01 admin shutdown, 57014 statement cancelled by the pool query timeout).
+function dependencyUnavailable(err: unknown): boolean {
+  const e = err as { code?: unknown; message?: unknown } | null;
+  const code = typeof e?.code === "string" ? e.code : "";
+  if (["ECONNREFUSED", "ETIMEDOUT", "ENOTFOUND", "57P01", "57014"].includes(code)) return true;
+  const message = typeof e?.message === "string" ? e.message : "";
+  return message.includes("Connection terminated");
+}
+
+// Express 4 forwards only synchronous throws to error middleware; a rejected
+// promise from an async route handler would otherwise kill the process as an
+// unhandled rejection (Node >=15) before any error handler runs. Patch the
+// dispatch path so async rejections reach the handler below — the same shim as
+// the express-async-errors package, kept local to avoid a new dependency.
+type DispatchLayer = { handle: ((...args: unknown[]) => unknown) & { length: number } };
+const require = createRequire(import.meta.url);
+const Layer = require("express/lib/router/layer.js") as {
+  prototype: { handle_request(this: DispatchLayer, req: unknown, res: unknown, next: (err?: unknown) => void): void };
+};
+Layer.prototype.handle_request = function handleRequestPatched(this: DispatchLayer, req: unknown, res: unknown, next: (err?: unknown) => void): void {
+  const fn = this.handle;
+  if (fn.length > 3) {
+    next();
+    return;
+  }
+  try {
+    const result = fn(req, res, next);
+    if (result && typeof (result as PromiseLike<unknown>).then === "function") {
+      Promise.resolve(result).catch(next);
+    }
+  } catch (err) {
+    next(err);
+  }
+};
+
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error("unhandled route error:", (err as Error).message);
+  if (dependencyUnavailable(err)) {
+    res.status(503).json(errorEnvelope("DEPENDENCY_UNAVAILABLE", "A backend dependency is unavailable; retry shortly"));
+    return;
+  }
   res.status(500).json({ success: false, error: { code: "INTERNAL", message: "Something went wrong" } });
 });
 

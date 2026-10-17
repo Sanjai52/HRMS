@@ -8,7 +8,8 @@ import {
 } from "@hrms/core";
 import { nextEventId } from "../ids.js";
 import { LeaseExpiredError } from "@hrms/core";
-import { catalogPool, shardPools } from "../db/pools.js";
+import { catalogPool } from "../db/pools.js";
+import { ownedShardPools, poolFor } from "../db/shards.js";
 import { requireAuth, requireRoles, type AuthedRequest } from "../middleware/auth.js";
 import { selfEmployeeId, shardFor, ownedBuckets } from "../directory/self.js";
 import { BullMqJobQueue } from "@hrms/core";
@@ -37,7 +38,7 @@ payrollRouter.post("/structures", requireAuth, requireRoles("HR", "ADMIN"), asyn
   }
   const { map } = await loadActiveMap(catalogPool);
   const shard = resolveShard(employeeId, map);
-  const pool = shardPools[shard];
+  const pool = poolFor(shard);
   if (!pool) {
     res.status(500).json(errorEnvelope("ROUTING_ERROR", "No shard owns this record"));
     return;
@@ -75,7 +76,7 @@ payrollRouter.get("/structures/:employeeId", requireAuth, async (req: AuthedRequ
     }
   }
   const { map } = await loadActiveMap(catalogPool);
-  const pool = shardPools[resolveShard(req.params.employeeId, map)];
+  const pool = poolFor(resolveShard(req.params.employeeId, map));
   if (!pool) {
     res.status(500).json(errorEnvelope("ROUTING_ERROR", "No shard owns this record"));
     return;
@@ -165,8 +166,7 @@ payrollRouter.get("/batches/:id", requireAuth, requireRoles("HR", "ADMIN"), asyn
   const owned = await ownedBuckets();
   const period = (b.rows[0] as { period: string }).period;
   const records: unknown[] = [];
-  for (const [shard, pool] of Object.entries(shardPools)) {
-    if (shard === "shard-4") continue;
+  for (const { shard, pool } of ownedShardPools()) {
     const r = await pool.query(
       "SELECT pr.*, e.name FROM payroll_records pr JOIN employees e ON e.employee_id = pr.employee_id WHERE pr.bucket_id = ANY($2) AND pr.period = $1 ORDER BY e.name LIMIT 200",
       [period, owned[shard] ?? []]
@@ -198,8 +198,7 @@ payrollRouter.get("/payslips/:id", requireAuth, async (req: AuthedRequest, res) 
   const roles = req.roles ?? [];
   const owned = await ownedBuckets();
   let found: Record<string, unknown> | null = null;
-  for (const [shard, pool] of Object.entries(shardPools)) {
-    if (shard === "shard-4") continue;
+  for (const { shard, pool } of ownedShardPools()) {
     const r = await pool.query(
       "SELECT pr.*, e.name, e.email FROM payroll_records pr JOIN employees e ON e.employee_id = pr.employee_id WHERE pr.record_id = $1 AND pr.bucket_id = ANY($2)",
       [req.params.id, owned[shard] ?? []]

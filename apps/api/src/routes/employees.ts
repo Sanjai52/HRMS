@@ -8,7 +8,8 @@ import {
   withFencedWrite,
   GateClosedError,
 } from "@hrms/core";
-import { catalogPool, shardPools } from "../db/pools.js";
+import { catalogPool } from "../db/pools.js";
+import { ownedShardPools, poolFor } from "../db/shards.js";
 import { assertCatalogOpen, CatalogGateError, gateError } from "../catalog-gate.js";
 import { requireAuth, requireRoles, type AuthedRequest } from "../middleware/auth.js";
 import { searchLimit } from "../middleware/rate-limit.js";
@@ -53,7 +54,7 @@ employeesRouter.patch("/me", requireAuth, async (req: AuthedRequest, res) => {
   }
   const employeeId = d.rows[0].employee_id as string;
   const { map } = await loadActiveMap(catalogPool);
-  const pool = shardPools[resolveShard(employeeId, map)];
+  const pool = poolFor(resolveShard(employeeId, map));
   if (!pool) {
     res.status(500).json(errorEnvelope("ROUTING_ERROR", "No shard owns this record"));
     return;
@@ -147,7 +148,7 @@ employeesRouter.post("/onboard", requireAuth, requireRoles("HR", "ADMIN"), async
     const employeeId = randomUUID();
     const bucket = stableEmployeeBucket(employeeId);
     const shard = resolveShard(employeeId, map);
-    const pool = shardPools[shard];
+    const pool = poolFor(shard);
     if (!pool) throw new Error(`unknown-shard:${shard}`);
     const displayId = `EMP-${String(Date.now()).slice(-6)}`;
     try {
@@ -208,8 +209,7 @@ employeesRouter.get("/team", requireAuth, requireRoles("MANAGER", "HR", "ADMIN")
       res.json({ success: true, data: [] });
       return;
     }
-    for (const [shard, pool] of Object.entries(shardPools)) {
-      if (shard === "shard-4") continue;
+    for (const { shard, pool } of ownedShardPools()) {
       const r = await pool.query(
         "SELECT employee_id, name, email, department, designation, status FROM employees WHERE manager_id = $1 AND bucket_id = ANY($2) ORDER BY name",
         [myId, owned[shard] ?? []]
@@ -218,8 +218,7 @@ employeesRouter.get("/team", requireAuth, requireRoles("MANAGER", "HR", "ADMIN")
     }
   } else {
     const department = typeof req.query.department === "string" ? req.query.department : null;
-    for (const [shard, pool] of Object.entries(shardPools)) {
-      if (shard === "shard-4") continue;
+    for (const { shard, pool } of ownedShardPools()) {
       const r = await pool.query(
         "SELECT employee_id, name, email, department, designation, status FROM employees WHERE bucket_id = ANY($2) AND ($1::text IS NULL OR department = $1) ORDER BY name LIMIT 50",
         [department, owned[shard] ?? []]
@@ -233,7 +232,7 @@ employeesRouter.get("/team", requireAuth, requireRoles("MANAGER", "HR", "ADMIN")
 async function shardRow(employeeId: string): Promise<{ shard: string; row: Record<string, unknown> } | null> {
   const { map } = await loadActiveMap(catalogPool);
   const shard = resolveShard(employeeId, map);
-  const pool = shardPools[shard];
+  const pool = poolFor(shard);
   if (!pool) return null;
   const r = await pool.query("SELECT employee_id, bucket_id, display_id, email, name, department, designation, status, version FROM employees WHERE employee_id = $1", [employeeId]);
   if (r.rows.length === 0) return null;
@@ -284,7 +283,7 @@ employeesRouter.patch("/:id", requireAuth, requireRoles("HR", "ADMIN"), async (r
   }
   const { map } = await loadActiveMap(catalogPool);
   const shard = resolveShard(req.params.id, map);
-  const pool = shardPools[shard];
+  const pool = poolFor(shard);
   if (!pool) {
     res.status(500).json(errorEnvelope("ROUTING_ERROR", "No shard owns this record"));
     return;
@@ -349,7 +348,7 @@ employeesRouter.post("/:id/deactivate", requireAuth, requireRoles("HR", "ADMIN")
   }
   const { map } = await loadActiveMap(catalogPool);
   const shard = resolveShard(req.params.id, map);
-  const pool = shardPools[shard];
+  const pool = poolFor(shard);
   if (!pool) {
     res.status(500).json(errorEnvelope("ROUTING_ERROR", "No shard owns this record"));
     return;
@@ -404,8 +403,7 @@ employeesRouter.post("/:id/deactivate", requireAuth, requireRoles("HR", "ADMIN")
       res.status(404).json(errorEnvelope("NOT_FOUND", "Employee not found or already inactive"));
       return;
     }
-    for (const [reShard, rePool] of Object.entries(shardPools)) {
-      if (reShard === "shard-4") continue;
+    for (const { shard: reShard, pool: rePool } of ownedShardPools()) {
       const owned = [...reassignMap].filter(([, s]) => s === reShard).map(([b]) => b);
       await withFencedWrite(rePool, async (c) => {
         await c.query(

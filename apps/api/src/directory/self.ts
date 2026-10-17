@@ -1,5 +1,6 @@
 import { loadActiveMap, resolveShard } from "@hrms/core";
-import { catalogPool, shardPools } from "../db/pools.js";
+import { catalogPool } from "../db/pools.js";
+import { poolFor, type ShardPool } from "../db/shards.js";
 import type { AuthedRequest } from "../middleware/auth.js";
 
 export async function selfEmployeeId(req: AuthedRequest): Promise<string | null> {
@@ -9,10 +10,10 @@ export async function selfEmployeeId(req: AuthedRequest): Promise<string | null>
   return d.rows.length > 0 ? (d.rows[0].employee_id as string) : null;
 }
 
-export async function shardFor(employeeId: string): Promise<{ shard: string; pool: (typeof shardPools)[string] } | null> {
+export async function shardFor(employeeId: string): Promise<{ shard: string; pool: ShardPool } | null> {
   const { map } = await loadActiveMap(catalogPool);
   const shard = resolveShard(employeeId, map);
-  const pool = shardPools[shard];
+  const pool = poolFor(shard);
   return pool ? { shard, pool } : null;
 }
 
