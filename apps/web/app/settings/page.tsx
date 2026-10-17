@@ -17,6 +17,9 @@ export default function SettingsPage() {
   const [desig, setDesig] = useState("");
   const [error, setError] = useState("");
   const [state, setState] = useState<"loading" | "error" | "ready">("loading");
+  const [prefs, setPrefs] = useState<{ email_enabled: boolean; in_app_enabled: boolean } | null>(null);
+  const [prefsNotice, setPrefsNotice] = useState("");
+  const [prefsError, setPrefsError] = useState("");
 
   async function load() {
     try {
@@ -30,19 +33,75 @@ export default function SettingsPage() {
 
   useEffect(() => {
     load();
+    authed<{ email_enabled: boolean; in_app_enabled: boolean }>("/api/v1/notifications/prefs")
+      .then(setPrefs)
+      .catch(() => setPrefs({ email_enabled: true, in_app_enabled: true }));
   }, []);
+
+  async function savePrefs(e: React.FormEvent) {
+    e.preventDefault();
+    if (!prefs) return;
+    setPrefsNotice("");
+    setPrefsError("");
+    try {
+      await authed("/api/v1/notifications/prefs", undefined, { method: "PUT", body: JSON.stringify(prefs) });
+      setPrefsNotice("Notification settings saved.");
+    } catch (err) {
+      setPrefsError((err as Error).message);
+    }
+  }
 
   return (
     <AppShell title="Settings">
-      {state === "loading" && <SkeletonRows n={4} />}
-      {state === "error" && (
-        <Card className="p-8 text-center">
-          <p className="font-semibold text-hof">Restricted area</p>
-          <p className="mt-1 text-sm text-foggy">{error}</p>
-        </Card>
-      )}
-      {state === "ready" && data && (
-        <div className="grid max-w-3xl gap-6">
+      <div className="grid max-w-3xl gap-6">
+        {prefs && (
+          <Card className="p-6">
+            <h2 className="text-lg font-bold text-hof">Notifications</h2>
+            <p className="mt-1 text-sm text-foggy">Choose how HRMS reaches you. Changes apply to future notifications.</p>
+            <form onSubmit={savePrefs} className="mt-4 grid gap-3">
+              <label className="flex items-center justify-between gap-4 rounded-input bg-pearl px-4 py-3 text-sm">
+                <span>
+                  <span className="block font-semibold text-hof">In-app notifications</span>
+                  <span className="block text-foggy">Show announcements and updates in your notification list.</span>
+                </span>
+                <input
+                  type="checkbox"
+                  aria-label="In-app notifications"
+                  checked={prefs.in_app_enabled}
+                  onChange={(e) => setPrefs({ ...prefs, in_app_enabled: e.target.checked })}
+                  className="h-5 w-5 shrink-0 rounded border-line accent-rausch"
+                />
+              </label>
+              <label className="flex items-center justify-between gap-4 rounded-input bg-pearl px-4 py-3 text-sm">
+                <span>
+                  <span className="block font-semibold text-hof">Email notifications</span>
+                  <span className="block text-foggy">Also send these updates to your work e-mail address.</span>
+                </span>
+                <input
+                  type="checkbox"
+                  aria-label="Email notifications"
+                  checked={prefs.email_enabled}
+                  onChange={(e) => setPrefs({ ...prefs, email_enabled: e.target.checked })}
+                  className="h-5 w-5 shrink-0 rounded border-line accent-rausch"
+                />
+              </label>
+              {prefsNotice && <p role="status" className="text-sm font-medium text-babu">{prefsNotice}</p>}
+              {prefsError && <p role="alert" className="text-sm font-medium text-rausch-dark">{prefsError}</p>}
+              <div>
+                <Button type="submit" className="h-10 px-5 text-sm">Save notifications</Button>
+              </div>
+            </form>
+          </Card>
+        )}
+        {state === "loading" && <SkeletonRows n={4} />}
+        {state === "error" && (
+          <Card className="p-8 text-center">
+            <p className="font-semibold text-hof">Restricted area</p>
+            <p className="mt-1 text-sm text-foggy">{error}</p>
+          </Card>
+        )}
+        {state === "ready" && data && (
+          <div className="grid gap-6">
           <Card className="p-6">
             <h2 className="text-lg font-bold text-hof">Departments</h2>
             <div className="mt-3 flex flex-wrap gap-2">
@@ -106,7 +165,8 @@ export default function SettingsPage() {
             </ul>
           </Card>
         </div>
-      )}
+        )}
+      </div>
     </AppShell>
   );
 }

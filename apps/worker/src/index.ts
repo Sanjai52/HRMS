@@ -119,6 +119,48 @@ async function handle(job: Job): Promise<unknown> {
       });
       return { emailed: notificationId };
     }
+    case "announcement-fanout": {
+      assertWorkerRegistrationValid();
+      const { announcementId, shard } = job.data as { announcementId: string; shard: string };
+      const pool = shards[shard];
+      if (!pool) throw new Error(`unknown-shard:${shard}`);
+      const a = await catalog.query("SELECT title, body FROM announcements WHERE announcement_id = $1", [announcementId]);
+      if (a.rows.length === 0) return { skipped: true };
+      const { title, body } = a.rows[0] as { title: string; body: string };
+      const { map } = await loadActiveMap(catalog);
+      const buckets: number[] = [];
+      for (const [bucket, owner] of map) if (owner === shard) buckets.push(bucket);
+      if (buckets.length === 0) return { shard, delivered: 0, emailed: 0 };
+      const emps = await pool.query("SELECT employee_id, bucket_id, email FROM employees WHERE status = 'ACTIVE' AND bucket_id = ANY($1)", [buckets]);
+      const prefsRows = await catalog.query(
+        "SELECT u.email_norm, COALESCE(p.in_app_enabled, TRUE) AS in_app_enabled, COALESCE(p.email_enabled, TRUE) AS email_enabled FROM users u LEFT JOIN notification_prefs p ON p.user_id = u.user_id WHERE u.email_norm = ANY($1)",
+        [emps.rows.map((e) => (e as { email: string }).email.trim().toLowerCase())]
+      );
+      const prefsByEmail = new Map((prefsRows.rows as Array<{ email_norm: string; in_app_enabled: boolean; email_enabled: boolean }>).map((r) => [r.email_norm, r]));
+      let delivered = 0;
+      const emailTargets: string[] = [];
+      for (const emp of emps.rows as Array<{ employee_id: string; bucket_id: number; email: string }>) {
+        const prefs = prefsByEmail.get(emp.email.trim().toLowerCase()) ?? { in_app_enabled: true, email_enabled: true };
+        if (prefs.in_app_enabled) {
+          const ins = await pool.query(
+            "INSERT INTO notifications (notification_id, employee_id, bucket_id, kind, title, body, source_ref) VALUES ($1,$2,$3,'ANNOUNCEMENT',$4,$5,$6) ON CONFLICT DO NOTHING",
+            [`${announcementId}:${emp.employee_id}`, emp.employee_id, emp.bucket_id, title, body, announcementId]
+          );
+          delivered += ins.rowCount ?? 0;
+        }
+        if (prefs.email_enabled) emailTargets.push(emp.email);
+      }
+      // Send the e-mails after the inserts so a large fan-out does not delay
+      // the in-app rows; batches keep the local SMTP hop concurrency bounded.
+      for (let i = 0; i < emailTargets.length; i += 8) {
+        await Promise.all(
+          emailTargets.slice(i, i + 8).map((to) =>
+            mailer.sendMail({ from: "HRMS <no-reply@hrms.local>", to, subject: `HRMS: ${title}`, text: body })
+          )
+        );
+      }
+      return { shard, delivered, emailed: emailTargets.length };
+    }
     default:
       throw new Error(`unknown-job:${job.name}`);
   }
