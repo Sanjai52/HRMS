@@ -107,7 +107,10 @@ async function applyEvent(
         nclient.release();
       }
       if (handles.enqueue) {
-        await handles.enqueue("notification", { notificationId: event.event_id, employeeId: event.employee_id, shard }, { jobId: event.event_id });
+        // BullMQ rejects custom ids that parse back to themselves as integers
+        // ("Custom Id cannot be integers"); outbox event ids are snowflakes.
+        // The prefix keeps a stable per-event id for BullMQ dedupe.
+        await handles.enqueue("notification", { notificationId: event.event_id, employeeId: event.employee_id, shard }, { jobId: `notify-${event.event_id}` });
       }
       break;
     }
