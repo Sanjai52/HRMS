@@ -1,7 +1,20 @@
 import { describe, it, expect, beforeAll } from "vitest";
+import { Pool } from "pg";
 
 const base = process.env.API_BASE ?? "http://localhost:4000";
 const tag = Date.now();
+
+async function auditCount(action: string, resource: string): Promise<number> {
+  const catalogUrl = process.env.CATALOG_DATABASE_URL;
+  if (!catalogUrl) return -1;
+  const pool = new Pool({ connectionString: catalogUrl });
+  try {
+    const r = await pool.query("SELECT count(*)::int AS c FROM audit_logs WHERE action = $1 AND resource = $2", [action, resource]);
+    return (r.rows[0] as { c: number }).c;
+  } finally {
+    await pool.end();
+  }
+}
 
 async function hrLogin(): Promise<string> {
   const res = await fetch(`${base}/api/v1/auth/login`, {
@@ -76,6 +89,8 @@ describe("Phase 5 payroll", () => {
     const hr = await hrLogin();
     const e = await makePerson(hr, "Pay Exact");
     expect(await setStructure(hr, e.employeeId, { basicPaise: 5000000, allowancesPaise: 2000000, otherDeductionsPaise: 0, pfPct: 12, taxPct: 10 })).toBe(200);
+    await fetch(`${base}/system/test/run-dispatcher`, { method: "POST" });
+    if (process.env.CATALOG_DATABASE_URL) expect(await auditCount("payroll.structure_updated", `employee:${e.employeeId}`)).toBeGreaterThan(0);
 
     const run = await fetch(`${base}/api/v1/payroll/batches`, {
       method: "POST",

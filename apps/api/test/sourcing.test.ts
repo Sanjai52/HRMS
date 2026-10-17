@@ -1,6 +1,19 @@
 import { describe, it, expect, beforeAll } from "vitest";
+import { Pool } from "pg";
 
 const base = process.env.API_BASE ?? "http://localhost:4000";
+
+async function auditCount(action: string, resource: string): Promise<number> {
+  const catalogUrl = process.env.CATALOG_DATABASE_URL;
+  if (!catalogUrl) return -1;
+  const pool = new Pool({ connectionString: catalogUrl });
+  try {
+    const r = await pool.query("SELECT count(*)::int AS c FROM audit_logs WHERE action = $1 AND resource = $2", [action, resource]);
+    return (r.rows[0] as { c: number }).c;
+  } finally {
+    await pool.end();
+  }
+}
 
 async function hrLogin(): Promise<string> {
   const res = await fetch(`${base}/api/v1/auth/login`, {
@@ -43,6 +56,7 @@ describe("Phase 7 sourcing crawler", () => {
     const run = await waitRun(hr, runId);
     expect(run.pages).toBeGreaterThan(0);
     expect(run.discovered).toBeGreaterThan(0);
+    if (process.env.CATALOG_DATABASE_URL) expect(await auditCount("crawl.started", `crawl:${runId}`)).toBeGreaterThan(0);
 
     const pool = await fetch(`${base}/api/v1/recruitment/candidates?q=nila.fernando`, { headers: { authorization: `Bearer ${hr}` } });
     expect(pool.status).toBe(200);

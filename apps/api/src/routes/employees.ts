@@ -81,6 +81,13 @@ employeesRouter.patch("/me", requireAuth, async (req: AuthedRequest, res) => {
         JSON.stringify({ name: row.name, email: row.email, department: row.department, designation: row.designation }),
         row.version,
       ]);
+      await c.query("INSERT INTO outbox_events (event_id, employee_id, bucket_id, type, payload, version) VALUES ($1,$2,$3,'AUDIT',$4,$5)", [
+        `${eventId}-audit`,
+        row.employee_id,
+        row.bucket_id,
+        JSON.stringify({ actor: req.userId ?? "", action: "employee.profile_updated", resource: `employee:${row.employee_id}` }),
+        row.version,
+      ]);
       return row;
     });
     if (!updated) {
@@ -161,6 +168,15 @@ employeesRouter.post("/onboard", requireAuth, requireRoles("HR", "ADMIN"), async
           "INSERT INTO outbox_events (event_id, employee_id, bucket_id, type, payload, version) VALUES ($1,$2,$3,'EMPLOYEE_CREATED',$4,1)",
           [eventId, employeeId, bucket, JSON.stringify({ name: row.name || row.email, email: row.email_norm, department: "", designation: "" })]
         );
+        await c.query(
+          "INSERT INTO outbox_events (event_id, employee_id, bucket_id, type, payload, version) VALUES ($1,$2,$3,'AUDIT',$4,1)",
+          [
+            `${eventId}-audit`,
+            employeeId,
+            bucket,
+            JSON.stringify({ actor: req.userId ?? "", action: "employee.onboarded", resource: `employee:${employeeId}`, email: row.email_norm, shard }),
+          ]
+        );
       });
     } catch (e) {
       if (e instanceof GateClosedError) {
@@ -171,10 +187,6 @@ employeesRouter.post("/onboard", requireAuth, requireRoles("HR", "ADMIN"), async
       throw e;
     }
     await client.query("UPDATE invitations SET status = 'ACTIVE' WHERE invitation_id = $1", [invitationId]);
-    await client.query(
-      "INSERT INTO audit_logs (event_id, actor, action, resource, metadata) VALUES ($1, $2, 'employee.onboarded', $3, $4)",
-      [eventId, req.userId ?? "", `employee:${employeeId}`, JSON.stringify({ email: row.email_norm, shard })]
-    );
     await client.query("COMMIT");
     res.status(201).json({ success: true, data: { employeeId, bucket, shard } });
   } catch (e) {
@@ -322,6 +334,13 @@ employeesRouter.patch("/:id", requireAuth, requireRoles("HR", "ADMIN"), async (r
         row.employee_id,
         row.bucket_id,
         JSON.stringify({ name: row.name, email: row.email, department: row.department, designation: row.designation }),
+        row.version,
+      ]);
+      await c.query("INSERT INTO outbox_events (event_id, employee_id, bucket_id, type, payload, version) VALUES ($1,$2,$3,'AUDIT',$4,$5)", [
+        `${eventId}-audit`,
+        row.employee_id,
+        row.bucket_id,
+        JSON.stringify({ actor: req.userId ?? "", action: "employee.updated", resource: `employee:${row.employee_id}` }),
         row.version,
       ]);
       return row;

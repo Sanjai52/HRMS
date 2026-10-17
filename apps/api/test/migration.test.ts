@@ -4,6 +4,18 @@ import { MIGRATION_MANIFEST } from "@hrms/core";
 
 const base = process.env.API_BASE ?? "http://localhost:4000";
 
+async function auditCount(action: string, resource: string): Promise<number> {
+  const catalogUrl = process.env.CATALOG_DATABASE_URL;
+  if (!catalogUrl) return -1;
+  const pool = new Pool({ connectionString: catalogUrl });
+  try {
+    const r = await pool.query("SELECT count(*)::int AS c FROM audit_logs WHERE action = $1 AND resource = $2", [action, resource]);
+    return (r.rows[0] as { c: number }).c;
+  } finally {
+    await pool.end();
+  }
+}
+
 // The migration below cuts the employee map over to shard-4. Owned shards are
 // 1-3 (routes skip shard-4), so leaving that map active poisons every test file
 // that runs afterwards, and a later run would re-copy buckets over copies that
@@ -126,6 +138,7 @@ describe("Phase 9 shard migration", () => {
     expect(preview.status).toBe(200);
     const pv = (await preview.json()) as { data: { moves: number; movedBuckets: Array<{ bucket: number; to: string }> } };
     expect(pv.data.moves).toBeGreaterThan(0);
+    if (process.env.CATALOG_DATABASE_URL) expect(await auditCount("migration.previewed", "migration:preview:shard-4")).toBeGreaterThan(0);
     const movedSet = new Set(pv.data.movedBuckets.filter((m) => m.to === "shard-4").map((m) => m.bucket));
     expect(movedSet.size).toBeGreaterThan(0);
 

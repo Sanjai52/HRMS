@@ -259,11 +259,25 @@ performanceRouter.post("/reviews", requireAuth, requireRoles("MANAGER", "HR", "A
 });
 
 performanceRouter.post("/reviews/:id/submit", requireAuth, requireRoles("MANAGER", "HR", "ADMIN"), async (req: AuthedRequest, res) => {
+  const eventId = leaseId(res);
+  if (!eventId) return;
   const owned = await ownedBuckets();
   for (const { shard, pool } of ownedShardPools()) {
     try {
       const r = await fencedWrite(pool, async (c) => {
-        return c.query("UPDATE reviews SET status = 'SUBMITTED', submitted_at = now() WHERE review_id = $1 AND status = 'DRAFT' AND bucket_id = ANY($2) RETURNING review_id", [req.params.id, owned[shard] ?? []]);
+        const updated = await c.query(
+          "UPDATE reviews SET status = 'SUBMITTED', submitted_at = now() WHERE review_id = $1 AND status = 'DRAFT' AND bucket_id = ANY($2) RETURNING review_id, employee_id, bucket_id",
+          [req.params.id, owned[shard] ?? []]
+        );
+        if (updated.rows.length === 0) return updated;
+        const row = updated.rows[0] as { employee_id: string; bucket_id: number };
+        await c.query("INSERT INTO outbox_events (event_id, employee_id, bucket_id, type, payload, version) VALUES ($1,$2,$3,'AUDIT',$4,1)", [
+          `${eventId}-audit`,
+          row.employee_id,
+          row.bucket_id,
+          JSON.stringify({ actor: req.userId ?? "", action: "perf.review_submitted", resource: `review:${req.params.id}` }),
+        ]);
+        return updated;
       });
       if (r.rows.length > 0) {
         res.json({ success: true, data: { reviewId: req.params.id } });
@@ -290,11 +304,18 @@ performanceRouter.post("/reviews/:id/release", requireAuth, requireRoles("HR", "
         await c.query("UPDATE reviews SET status = 'RELEASED' WHERE review_id = $1", [req.params.id]);
         const eventId = leaseId(res);
         if (!eventId) throw new Error("LEASE");
+        const row = r.rows[0] as { employee_id: string; bucket_id: number };
         await c.query("INSERT INTO outbox_events (event_id, employee_id, bucket_id, type, payload, version) VALUES ($1,$2,$3,'REVIEW_RELEASED',$4,1)", [
           eventId,
-          (r.rows[0] as { employee_id: string }).employee_id,
-          (r.rows[0] as { bucket_id: number }).bucket_id,
+          row.employee_id,
+          row.bucket_id,
           JSON.stringify({ reviewId: req.params.id }),
+        ]);
+        await c.query("INSERT INTO outbox_events (event_id, employee_id, bucket_id, type, payload, version) VALUES ($1,$2,$3,'AUDIT',$4,1)", [
+          `${eventId}-audit`,
+          row.employee_id,
+          row.bucket_id,
+          JSON.stringify({ actor: req.userId ?? "", action: "perf.review_released", resource: `review:${req.params.id}` }),
         ]);
         return true;
       });

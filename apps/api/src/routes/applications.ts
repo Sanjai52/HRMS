@@ -375,6 +375,12 @@ applicationsRouter.post("/applications/:id/interviews", requireAuth, requireRole
         (interviewer as string) ?? "",
         (scheduledAt as string) ?? null,
       ]);
+      await c.query("INSERT INTO candidate_outbox (event_id, candidate_id, candidate_bucket_id, type, payload) VALUES ($1,$2,$3,'AUDIT',$4)", [
+        `${id}-audit`,
+        route.candidateId,
+        route.bucket,
+        JSON.stringify({ actor: req.userId ?? "", action: "interview.created", resource: `interview:${id}`, metadata: { applicationId: req.params.id } }),
+      ]);
     });
   } catch (e) {
     if (e instanceof GateClosedError) {
@@ -397,6 +403,16 @@ applicationsRouter.post("/applications/:id/interviews/:interviewId", requireAuth
     res.status(404).json(errorEnvelope("NOT_FOUND", "Application not found"));
     return;
   }
+  let eventId: string;
+  try {
+    eventId = nextEventId();
+  } catch (e) {
+    if (e instanceof LeaseExpiredError) {
+      res.status(503).json(errorEnvelope("ID_LEASE_UNAVAILABLE", "ID generation is paused. Try again shortly."));
+      return;
+    }
+    throw e;
+  }
   try {
     await fencedWrite(route.pool, async (c) => {
       await c.query("UPDATE interviews SET status = COALESCE($3, status), feedback = COALESCE($4, feedback) WHERE interview_id = $1 AND application_id = $2", [
@@ -404,6 +420,12 @@ applicationsRouter.post("/applications/:id/interviews/:interviewId", requireAuth
         req.params.id,
         status ?? null,
         (feedback as string) ?? null,
+      ]);
+      await c.query("INSERT INTO candidate_outbox (event_id, candidate_id, candidate_bucket_id, type, payload) VALUES ($1,$2,$3,'AUDIT',$4)", [
+        `${eventId}-audit`,
+        route.candidateId,
+        route.bucket,
+        JSON.stringify({ actor: req.userId ?? "", action: "interview.updated", resource: `interview:${req.params.interviewId}`, metadata: { applicationId: req.params.id, status: status ?? null } }),
       ]);
     });
   } catch (e) {
@@ -445,6 +467,12 @@ applicationsRouter.post("/applications/:id/assessments", requireAuth, requireRol
         route.bucket,
         type,
         (score as string) ?? "",
+      ]);
+      await c.query("INSERT INTO candidate_outbox (event_id, candidate_id, candidate_bucket_id, type, payload) VALUES ($1,$2,$3,'AUDIT',$4)", [
+        `${id}-audit`,
+        route.candidateId,
+        route.bucket,
+        JSON.stringify({ actor: req.userId ?? "", action: "assessment.completed", resource: `assessment:${id}`, metadata: { applicationId: req.params.id } }),
       ]);
     });
   } catch (e) {

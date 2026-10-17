@@ -54,6 +54,10 @@ sourcingRouter.post("/runs", requireAuth, requireRoles("HR", "ADMIN"), searchLim
       await failClient.query("BEGIN");
       await assertCatalogOpen(failClient);
       await failClient.query("UPDATE crawl_runs SET status = 'FAILED' WHERE run_id = $1", [runId]);
+      await writeAudit(
+        { query: failClient.query.bind(failClient) },
+        { actor: req.userId ?? "", action: "crawl.failed", resource: `crawl:${runId}`, metadata: { reason: "enqueue_unavailable" } }
+      );
       await failClient.query("COMMIT");
     } catch (markErr) {
       await failClient.query("ROLLBACK").catch(() => undefined);

@@ -4,6 +4,18 @@ import { Pool } from "pg";
 const base = process.env.API_BASE ?? "http://localhost:4000";
 const tag = Date.now();
 
+async function auditCount(action: string, resource: string): Promise<number> {
+  const catalogUrl = process.env.CATALOG_DATABASE_URL;
+  if (!catalogUrl) return -1;
+  const pool = new Pool({ connectionString: catalogUrl });
+  try {
+    const r = await pool.query("SELECT count(*)::int AS c FROM audit_logs WHERE action = $1 AND resource = $2", [action, resource]);
+    return (r.rows[0] as { c: number }).c;
+  } finally {
+    await pool.end();
+  }
+}
+
 async function hrLogin(): Promise<string> {
   const res = await fetch(`${base}/api/v1/auth/login`, {
     method: "POST",
@@ -119,6 +131,10 @@ describe("Phase 8 performance", () => {
     const outbox = await findReviewReleasedOutbox(rv.reviewId);
     if (process.env.DATABASE_SHARD_1_URL) {
       expect(outbox?.type).toBe("REVIEW_RELEASED");
+    }
+    if (process.env.CATALOG_DATABASE_URL) {
+      expect(await auditCount("perf.review_submitted", `review:${rv.reviewId}`)).toBeGreaterThan(0);
+      expect(await auditCount("perf.review_released", `review:${rv.reviewId}`)).toBeGreaterThan(0);
     }
 
     const mine = await fetch(`${base}/api/v1/performance/reviews/me?cycleId=${c.cycleId}`, { headers: { authorization: `Bearer ${e.token}` } });

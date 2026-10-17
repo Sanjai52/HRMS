@@ -1,7 +1,20 @@
 import { describe, it, expect, beforeAll } from "vitest";
+import { Pool } from "pg";
 import { Snowflake, stableEmployeeBucket } from "@hrms/core";
 
 const base = process.env.API_BASE ?? "http://localhost:4000";
+const catalogUrl = process.env.CATALOG_DATABASE_URL;
+
+async function auditCount(action: string, resource: string): Promise<number> {
+  if (!catalogUrl) return -1;
+  const pool = new Pool({ connectionString: catalogUrl });
+  try {
+    const r = await pool.query("SELECT count(*)::int AS c FROM audit_logs WHERE action = $1 AND resource = $2", [action, resource]);
+    return (r.rows[0] as { c: number }).c;
+  } finally {
+    await pool.end();
+  }
+}
 
 async function hrLogin(): Promise<string> {
   const res = await fetch(`${base}/api/v1/auth/login`, {
@@ -86,6 +99,8 @@ describe("Phase 3 employee lifecycle", () => {
     expect(suggest.status).toBe(200);
     const sugBody = (await suggest.json()) as { data: Array<{ employeeId: string }> };
     expect(sugBody.data.some((r) => r.employeeId === ob.data.employeeId)).toBe(true);
+
+    if (catalogUrl) expect(await auditCount("employee.onboarded", `employee:${ob.data.employeeId}`)).toBeGreaterThan(0);
   });
 
   it("update is version-checked; stale writes are rejected", async () => {
@@ -113,6 +128,45 @@ describe("Phase 3 employee lifecycle", () => {
     });
     expect(stale.status).toBe(409);
     await runDispatcher();
+    if (catalogUrl) expect(await auditCount("employee.updated", `employee:${id}`)).toBeGreaterThan(0);
+  });
+
+  it("employee edits their own profile and the change is audited", async () => {
+    const hr = await hrLogin();
+    const email = `self${Date.now()}@hrms.local`;
+    const create = await fetch(`${base}/api/v1/auth/invitations`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${hr}` },
+      body: JSON.stringify({ email, name: "Self Service", role: "EMPLOYEE" }),
+    });
+    expect(create.status).toBe(201);
+    const { data } = (await create.json()) as { data: { invitationId: string; token: string } };
+    const accept = await fetch(`${base}/api/v1/auth/accept`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: data.token, password: "SelfPass12!" }),
+    });
+    const accepted = (await accept.json()) as { data: { token: string } };
+    const onboard = await fetch(`${base}/api/v1/employees/onboard`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${hr}` },
+      body: JSON.stringify({ invitationId: data.invitationId }),
+    });
+    expect(onboard.status).toBe(201);
+    const ob = (await onboard.json()) as { data: { employeeId: string } };
+    await runDispatcher();
+
+    const me = await fetch(`${base}/api/v1/employees/me`, { headers: { authorization: `Bearer ${accepted.data.token}` } });
+    expect(me.status).toBe(200);
+    const meBody = (await me.json()) as { data: { version: number } };
+    const upd = await fetch(`${base}/api/v1/employees/me`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", authorization: `Bearer ${accepted.data.token}` },
+      body: JSON.stringify({ name: "Self Service Jr", version: meBody.data.version }),
+    });
+    expect(upd.status).toBe(200);
+    await runDispatcher();
+    if (catalogUrl) expect(await auditCount("employee.profile_updated", `employee:${ob.data.employeeId}`)).toBeGreaterThan(0);
   });
 
   it("deactivate removes the directory row and suggestions; rebuild repairs a lost projection", async () => {

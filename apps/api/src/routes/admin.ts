@@ -111,6 +111,12 @@ adminRouter.post("/shards/preview", requireAuth, requireRoles("ADMIN"), async (r
   try {
     const preview = await previewNewShard(newShard);
     const est = await estimateMoves(preview.moves);
+    await writeAudit(catalogPool, {
+      actor: req.userId ?? "",
+      action: "migration.previewed",
+      resource: `migration:preview:${newShard}`,
+      metadata: { fromVersion: preview.fromVersion, toVersion: preview.toVersion, moves: preview.moves.length },
+    });
     res.json({ success: true, data: { fromVersion: preview.fromVersion, toVersion: preview.toVersion, members: preview.members, newShard, movedBuckets: preview.moves, moves: preview.moves.length, estimatedRows: est.rows } });
   } catch (e) {
     res.status(400).json(errorEnvelope("PREVIEW_FAILED", (e as Error).message));

@@ -391,6 +391,13 @@ leaveRouter.post("/requests/:id/cancel", requireAuth, async (req: AuthedRequest,
         JSON.stringify({ requestId: req.params.id, status: "CANCELLED", approver: req.userId ?? "" }),
         row.version + 1,
       ]);
+      await c.query("INSERT INTO outbox_events (event_id, employee_id, bucket_id, type, payload, version) VALUES ($1,$2,$3,'AUDIT',$4,$5)", [
+        `${eventId}-audit`,
+        row.employee_id,
+        row.bucket_id,
+        JSON.stringify({ actor: req.userId ?? "", action: "leave.cancelled", resource: `leave:${req.params.id}` }),
+        row.version + 1,
+      ]);
     });
     res.json({ success: true, data: { requestId: req.params.id, status: "CANCELLED" } });
   } catch (e) {
