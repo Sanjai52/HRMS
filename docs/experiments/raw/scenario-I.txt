@@ -1,0 +1,58 @@
+Scenario I — shard-2 outage: routed writes fail closed, aggregate reads go partial
+Date: 2026-10-18 (evening session)  |  Commit: 8e872dd + partialMeta dedupe (fix note below)
+Setup: APIs :4000/:4002/:4003 + worker :4001; `docker compose stop shard-2`; live HR session
+(hr@hrms.local); fresh employee via invite -> accept -> onboard, routed to shard-2.
+Method: real HTTP through api :4000, exact curl outputs; window 1 = first outage capture
+(some bodies head-truncated), window 2 = recapture after the dedupe fix. Raws:
+scenario-I-window1.txt, scenario-I-window2.txt, scenario-I-prededupe.txt.
+
+Employee pick (routing map): try 1: employee 0d7e7a32-afbc-4950-8345-eed0f2d5c4f2 ->
+shard-2 (shardtwo<ts>x1@hrms.local); projection to shard-2 confirmed (HR GET
+/api/v1/employees/:id -> 200) before the stop.
+
+-- window 1 (scenario-I-window1.txt) --
+a) employee POST /api/v1/attendance/check-in (routed to dead shard-2):
+   {"success":false,"error":{"code":"DEPENDENCY_UNAVAILABLE",...}}  HTTP 503 after 0.028941s
+a2) employee GET /api/v1/attendance/me:     503 DEPENDENCY_UNAVAILABLE   0.009534s
+b) HR GET /api/v1/reports/overview?month=2026-10: 200; headcount block from catalog
+   intact (834 unassigned + Engineering 37 + HR 10 + ...); meta captured in window 2.
+c) HR GET /api/v1/attendance/day?date=2026-10-18: 200; 7 rows from healthy shards
+   (recent check-ins like "Atty One" 10:42-10:50); meta captured in window 2.
+d) HR GET /api/v1/employees/team: 200; 100 rows from healthy shards
+   (seeded: Aarav Sharma 000000000124 Engineering, Aditi Nair 000000000121, ...).
+e) HR GET /api/v1/employees?q=Aarav: 200; 3 directory rows (catalog projection read).
+f) HR GET /api/v1/employees/<dead-shard employee>: 503 DEPENDENCY_UNAVAILABLE 0.008017s
+
+-- window 2, full meta bodies (scenario-I-window2.txt) --
+a) employee check-in (still down):   503 DEPENDENCY_UNAVAILABLE   0.033311s
+b) HR reports/overview?month=2026-10: HTTP 200 after 0.036347s
+   meta {"partial":true,"unavailable":["shard-2"]}
+c) HR attendance/day?date=2026-10-18: 200 after 0.014208s, data=7 rows,
+   meta {"partial":true,"unavailable":["shard-2"]}
+d) HR employees/team: 200 after 0.012701s, data=100 rows,
+   meta {"partial":true,"unavailable":["shard-2"]}
+e) HR employees?q=Aarav: 200 after 0.015849s, data=3 rows, meta=undefined (by design)
+
+Fix note (same task): the first capture (scenario-I-prededupe.txt) returned
+"unavailable":["shard-2","shard-2","shard-2"] from reports/overview (one entry per
+failed sub-read: attendance/leave/payroll blocks). partialMeta() now dedupes the
+list; window 2 above shows the corrected single entry.
+
+-- recovery (both windows; `docker compose start shard-2`, 4s) --
+employee check-in: 201 {"attendance_id":"105299345888256000","check_in":"2026-10-18T13:42:00.427Z",
+  "status":"LATE","duplicate":true} 0.077719s — idempotent across the boundary; the dead
+  window never wrote (window 1's first post-recovery check-in wrote with duplicate:false).
+HR reports/overview meta: {"partial":false,"unavailable":[]}
+HR employees/team: data=150 rows, meta {"partial":false,"unavailable":[]}
+
+Interpretation:
+- Routed writes to a dead shard fail closed in <35ms (pg connect refused -> the
+  dependencyUnavailable shim maps to 503); no partial write lands anywhere.
+- Aggregate/scatter-gather reads keep serving 200 with meta.partial true and the dead
+  shard named; other shards' data intact (headcount from catalog; day rows 7; team
+  100 -> 150 after recovery).
+- Recorded divergence: the brief's "/employees?search=" partial expectation maps to the
+  implemented scatter-gather endpoint GET /api/v1/employees/team. GET /api/v1/employees
+  is a catalog employee-directory read by design (no shard dependency, no meta).
+- Check-in is idempotent across the outage/recovery boundary (duplicate:true, same
+  attendance_id).

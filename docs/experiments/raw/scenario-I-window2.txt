@@ -1,0 +1,22 @@
+--- probe a (second window): employee check-in -> expect 503 ---
+{"success":false,"error":{"code":"DEPENDENCY_UNAVAILABLE","message":"A backend dependency is unavailable; retry shortly"}}
+HTTP 503 after 0.033311s
+--- probe b: reports/overview?month=2026-10 (full meta) ---
+HTTP 200 after 0.036347s
+data=obj meta={"partial":true,"unavailable":["shard-2"]}
+--- probe c: attendance/day?date=2026-10-18 (full meta) ---
+HTTP 200 after 0.014208s
+data=7 meta={"partial":true,"unavailable":["shard-2"]}
+--- probe d: employees/team (full meta) ---
+HTTP 200 after 0.012701s
+data=100 meta={"partial":true,"unavailable":["shard-2"]}
+--- probe e: employees?q=Aarav (catalog directory; full body length) ---
+HTTP 200 after 0.015849s
+data=3 meta=undefined
+--- recovery (second window): employee check-in again (idempotent) ---
+{"success":true,"data":{"attendance_id":"105299345888256000","check_in":"2026-10-18T13:42:00.427Z","check_out":null,"status":"LATE","duplicate":true}}
+HTTP 201 after 0.077719s
+--- recovery: reports/overview meta ---
+data=obj meta={"partial":false,"unavailable":[]}
+--- recovery: employees/team meta ---
+data=150 meta={"partial":false,"unavailable":[]}

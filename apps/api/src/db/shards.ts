@@ -28,5 +28,6 @@ export function allShardPools(): Array<{ shard: string; pool: ShardPool }> {
 
 /** Meta for a scatter-gather read: always present, `partial` when any shard failed. */
 export function partialMeta(unavailable: string[]): { partial: boolean; unavailable: string[] } {
-  return { partial: unavailable.length > 0, unavailable };
+  const unique = [...new Set(unavailable)];
+  return { partial: unique.length > 0, unavailable: unique };
 }
