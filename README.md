@@ -25,6 +25,31 @@ npm --workspace @hrms/web run dev    # :3000
 Ports 5438–5442 dodge the stock Windows Postgres on 5432. Login with
 `hr@hrms.local` / `ChangeMe123!` (seeded, local-only).
 
+## API replicas behind NGINX (local scaling experiment)
+
+The API listens on `API_PORT` (default 4000) and echoes its port as the
+`x-api-instance` response header, so load balancing is observable.
+
+```bash
+API_PORT=4002 npm --workspace @hrms/api run dev   # replica 2
+API_PORT=4003 npm --workspace @hrms/api run dev   # replica 3
+docker compose up -d nginx                        # entry point http://localhost:8080
+for i in {1..6}; do curl -sD- -o /dev/null localhost:8080/health | grep -i x-api-instance; done
+```
+
+NGINX round-robins the three replicas (round-robin is the baseline; add a
+`least_conn;` line to the `upstream` block in `infrastructure/nginx/nginx.conf`
+to benchmark the alternative) with passive failure handling
+(`max_fails=2 fail_timeout=10s`):
+requests are retried on the next server and an unhealthy replica is ejected for
+10 s. Prometheus scrapes each replica directly — `/metrics` is blocked at the
+ingress and restricted to internal peers by the API itself.
+
+`TRUST_PROXY` (default `172.16.0.0/12`, the Docker bridge subnet) is the only
+network allowed to set `X-Forwarded-For`; it accepts comma-separated IPs,
+CIDRs or hop counts and any other value fails startup. Set it in production to
+the actual proxy subnet so the rate limiter can never be spoofed by a client.
+
 ## Layout
 
 - `apps/web` — Next.js App Router, Tailwind v4, Airbnb design tokens

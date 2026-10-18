@@ -4,13 +4,13 @@ import { nextEventId } from "../ids.js";
 import { LeaseExpiredError } from "@hrms/core";
 import { catalogPool } from "../db/pools.js";
 import { requireAuth, requireRoles, type AuthedRequest } from "../middleware/auth.js";
-import { searchLimit } from "../middleware/rate-limit.js";
+import { crawlLimit } from "../middleware/rate-limit.js";
 import { writeAudit } from "../audit/audit.js";
 import { assertCatalogOpen, CatalogGateError, gateError } from "../catalog-gate.js";
 
 export const sourcingRouter = Router();
 
-sourcingRouter.post("/runs", requireAuth, requireRoles("HR", "ADMIN"), searchLimit, async (req: AuthedRequest, res) => {
+sourcingRouter.post("/runs", requireAuth, requireRoles("HR", "ADMIN"), crawlLimit, async (req: AuthedRequest, res) => {
   const { role, skills } = req.body as { role?: string; skills?: unknown };
   const skillList = Array.isArray(skills) ? skills.filter((s): s is string => typeof s === "string").map((s) => s.trim()).filter(Boolean).slice(0, 20) : [];
   let runId: string;

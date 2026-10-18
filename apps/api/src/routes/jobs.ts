@@ -5,20 +5,20 @@ import { LeaseExpiredError } from "@hrms/core";
 import { catalogPool } from "../db/pools.js";
 import { kv, redisKv } from "../db/redis.js";
 import { requireAuth, requireRoles, type AuthedRequest } from "../middleware/auth.js";
-import { shortLinkLimit } from "../middleware/rate-limit.js";
+import { publicJobsLimit, shortLinkLimit } from "../middleware/rate-limit.js";
 import { writeAudit } from "../audit/audit.js";
 import { assertCatalogOpen, CatalogGateError, gateError } from "../catalog-gate.js";
 
 export const jobsRouter = Router();
 
-jobsRouter.get("/", async (_req, res) => {
+jobsRouter.get("/", publicJobsLimit, async (_req, res) => {
   const rows = await catalogPool.query(
     "SELECT job_id, slug, title, department, location, employment_type, salary_range, created_at, closing_date FROM jobs WHERE status = 'OPEN' ORDER BY created_at DESC LIMIT 50"
   );
   res.json({ success: true, data: rows.rows });
 });
 
-jobsRouter.get("/:slug", async (req, res) => {
+jobsRouter.get("/:slug", publicJobsLimit, async (req, res) => {
   const rows = await catalogPool.query("SELECT * FROM jobs WHERE slug = $1 AND status = 'OPEN'", [req.params.slug]);
   if (rows.rows.length === 0) {
     res.status(404).json(errorEnvelope("NOT_FOUND", "Job not found"));

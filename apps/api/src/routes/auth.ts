@@ -9,7 +9,7 @@ import { emailProvider } from "../email.js";
 import { writeAudit } from "../audit/audit.js";
 import { assertCatalogOpen, CatalogGateError, gateError } from "../catalog-gate.js";
 import { requireAuth, requireRoles, type AuthedRequest } from "../middleware/auth.js";
-import { loginLimit, recoverLimit } from "../middleware/rate-limit.js";
+import { acceptLimit, loginLimit, recoverLimit } from "../middleware/rate-limit.js";
 
 export const authRouter = Router();
 
@@ -138,7 +138,7 @@ authRouter.get("/invitations", requireAuth, requireRoles("HR", "ADMIN"), async (
   res.json({ success: true, data: rows.rows });
 });
 
-authRouter.post("/accept", loginLimit, async (req, res) => {  const { token, password } = req.body as { token?: string; password?: string };
+authRouter.post("/accept", acceptLimit, async (req, res) => {  const { token, password } = req.body as { token?: string; password?: string };
   if (!token || !password || password.length < 8) {
     res.status(400).json(errorEnvelope("VALIDATION_ERROR", "A valid invitation token and a password of 8+ characters are required"));
     return;

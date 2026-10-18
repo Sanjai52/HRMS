@@ -22,14 +22,19 @@ import { searchRouter } from "./routes/search.js";
 import { initIds } from "./ids.js";
 import { registerProcess } from "./registry.js";
 import { metricsMiddleware, metricsRouter } from "./routes/metrics.js";
+import { parseTrustProxy } from "./trust-proxy.js";
 
 const app = express();
+// Narrow, env-controlled trust boundary: only NGINX's network may set
+// X-Forwarded-For. A malformed value throws here, at boot.
+app.set("trust proxy", parseTrustProxy(process.env.TRUST_PROXY ?? "172.16.0.0/12"));
 app.use(cors({ origin: process.env.WEB_ORIGIN ?? "http://localhost:3000", credentials: true }));
 app.use(express.json());
 app.use(cookieParser());
 app.use(metricsMiddleware);
 app.use((req, res, next) => {
   res.setHeader("x-request-id", `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
+  res.setHeader("x-api-instance", process.env.API_PORT ?? "4000");
   next();
 });
 
