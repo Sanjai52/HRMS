@@ -10,6 +10,10 @@ export function redisKv(): Redis {
       maxRetriesPerRequest: 3,
       enableOfflineQueue: true,
       retryStrategy: (times) => Math.min(times * 200, 2000),
+      // Bound the fail-closed window: with redis-kv down, queued commands
+      // must reject in ~2s so the limiter answers 503 instead of hanging
+      // for the whole reconnect window (Scenario F, 2026-10-18).
+      commandTimeout: 2000,
     });
   }
   return client;

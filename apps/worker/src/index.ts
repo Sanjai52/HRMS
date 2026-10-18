@@ -92,7 +92,7 @@ const queueConnection = new Redis(process.env.REDIS_QUEUE_URL ?? "redis://localh
   maxRetriesPerRequest: null,
 });
 
-const kv = new Redis(process.env.REDIS_KV_URL ?? "redis://localhost:6380", { maxRetriesPerRequest: 3 });
+const kv = new Redis(process.env.REDIS_KV_URL ?? "redis://localhost:6380", { maxRetriesPerRequest: 3, commandTimeout: 2000 });
 const queue = new Queue("hrms", { connection: queueConnection });
 const mailer = nodemailer.createTransport({
   host: process.env.EMAIL_SMTP_HOST ?? "localhost",

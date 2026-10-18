@@ -60,12 +60,19 @@ app.use(metricsRouter);
 // Map backend-availability failures to a retryable 503 instead of a bare 500.
 // pg surfaces these as Node socket errors (gateway/shard down) or SQLSTATEs
 // (57P01 admin shutdown, 57014 statement cancelled by the pool query timeout).
+// ioredis surfaces them as MaxRetriesPerRequestError (finite retry producers),
+// "Connection is closed." (socket lost) or "Command timed out" (commandTimeout).
 function dependencyUnavailable(err: unknown): boolean {
-  const e = err as { code?: unknown; message?: unknown } | null;
+  const e = err as { code?: unknown; message?: unknown; name?: unknown } | null;
   const code = typeof e?.code === "string" ? e.code : "";
   if (["ECONNREFUSED", "ETIMEDOUT", "ENOTFOUND", "57P01", "57014"].includes(code)) return true;
+  const name = typeof e?.name === "string" ? e.name : "";
+  if (name === "MaxRetriesPerRequestError") return true;
   const message = typeof e?.message === "string" ? e.message : "";
-  return message.includes("Connection terminated");
+  if (message.includes("Connection terminated")) return true;
+  if (message.includes("Connection is closed")) return true;
+  if (message.includes("Command timed out")) return true;
+  return false;
 }
 
 // Express 4 forwards only synchronous throws to error middleware; a rejected
