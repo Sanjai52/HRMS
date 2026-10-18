@@ -1,6 +1,6 @@
 import { computePay, monthRange, overlapWorkdays } from "./payroll.js";
 import { countWorkdays } from "./leave-rules.js";
-import type { Queryable } from "./shard-router.js";
+import { ACTIVE_SHARDS, type Queryable } from "./shard-router.js";
 
 export interface ChunkDb {
   catalog: Queryable;
@@ -18,7 +18,7 @@ export async function runPayrollChunk(
   const holidays = new Set(h.rows.map((r) => (r.holiday_date as unknown as Date).toISOString().slice(0, 10)));
   const scheduled = countWorkdays(start, end, holidays);
   const people = await db.shard.query("SELECT employee_id, bucket_id FROM employees WHERE status = 'ACTIVE' LIMIT 500");
-  await db.catalog.query("UPDATE payroll_batches SET status = 'RUNNING', total = total + $2 WHERE batch_id = $1", [batchId, people.rows.length]);
+  await db.catalog.query("UPDATE payroll_batches SET status = 'RUNNING' WHERE batch_id = $1 AND status = 'PENDING'", [batchId]);
   const ids = people.rows.map((r) => r.employee_id as string);
 
   type StructureRow = { employee_id: string; basic_paise: number; allowances_paise: number; other_deductions_paise: number; pf_pct: string; tax_pct: string };
@@ -88,11 +88,32 @@ export async function runPayrollChunk(
       failed += 1;
     }
   }
-  await db.catalog.query("UPDATE payroll_batches SET done = done + $2, failed = failed + $3, skipped = skipped + $4 WHERE batch_id = $1", [batchId, processed, failed, skipped]);
-  const b = await db.catalog.query("SELECT total, done, failed, skipped FROM payroll_batches WHERE batch_id = $1", [batchId]);
-  const row = b.rows[0] as unknown as { total: number; done: number; failed: number; skipped: number } | undefined;
-  if (row && row.done + row.failed + row.skipped >= row.total && row.total > 0) {
-    await db.catalog.query("UPDATE payroll_batches SET status = $2 WHERE batch_id = $1", [batchId, row.failed > 0 ? "PARTIAL_FAILED" : "COMPLETED"]);
-  }
+  // Per-shard bookkeeping is idempotent: a retried chunk (worker kill, BullMQ
+  // stall redelivery) rewrites its own row instead of inflating the batch totals.
+  await db.catalog.query(
+    `INSERT INTO payroll_batch_shards (batch_id, shard, total, done, failed, skipped, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, now())
+     ON CONFLICT (batch_id, shard) DO UPDATE SET
+       total = EXCLUDED.total, done = EXCLUDED.done, failed = EXCLUDED.failed, skipped = EXCLUDED.skipped, updated_at = EXCLUDED.updated_at`,
+    [batchId, shard, people.rows.length, processed, failed, skipped]
+  );
+  const agg = await db.catalog.query(
+    `SELECT COUNT(*)::int AS shards,
+            COALESCE(SUM(total), 0)::int AS total,
+            COALESCE(SUM(done), 0)::int AS done,
+            COALESCE(SUM(failed), 0)::int AS failed,
+            COALESCE(SUM(skipped), 0)::int AS skipped
+       FROM payroll_batch_shards WHERE batch_id = $1`,
+    [batchId]
+  );
+  const s = agg.rows[0] as unknown as { shards: number; total: number; done: number; failed: number; skipped: number };
+  const finished = s.shards >= ACTIVE_SHARDS.length && s.total > 0 && s.done + s.failed + s.skipped >= s.total;
+  await db.catalog.query(
+    `UPDATE payroll_batches
+        SET total = $2, done = $3, failed = $4, skipped = $5,
+            status = CASE WHEN $6 THEN (CASE WHEN $4 > 0 THEN 'PARTIAL_FAILED' ELSE 'COMPLETED' END) ELSE status END
+      WHERE batch_id = $1`,
+    [batchId, s.total, s.done, s.failed, s.skipped, finished]
+  );
   return { processed, failed, skipped };
 }

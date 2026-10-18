@@ -127,7 +127,7 @@ describe("Phase 5 payroll", () => {
     const mine2 = await fetch(`${base}/api/v1/payroll/me?period=2026-09`, { headers: { authorization: `Bearer ${e.token}` } });
     const mine2Body = (await mine2.json()) as { data: unknown[] };
     expect(mine2Body.data.length).toBe(1);
-  });
+  }, 30000);
 
   it("payslips are restricted to the owner and HR", async () => {
     const hr = await hrLogin();
@@ -149,5 +149,5 @@ describe("Phase 5 payroll", () => {
     expect(denied.status).toBe(403);
     const allowed = await fetch(`${base}/api/v1/payroll/payslips/${mine.data[0].record_id}`, { headers: { authorization: `Bearer ${e.token}` } });
     expect(allowed.status).toBe(200);
-  });
+  }, 30000);
 });

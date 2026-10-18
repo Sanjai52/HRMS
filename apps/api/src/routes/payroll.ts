@@ -1,5 +1,6 @@
 import { Router } from "express";
 import {
+  ACTIVE_SHARDS,
   errorEnvelope,
   loadActiveMap,
   resolveShard,
@@ -141,7 +142,7 @@ payrollRouter.post("/batches", requireAuth, requireRoles("HR", "ADMIN"), async (
   }
   const queue = new BullMqJobQueue(process.env.REDIS_QUEUE_URL ?? "redis://localhost:6379");
   try {
-    for (const shard of ["shard-1", "shard-2", "shard-3"]) {
+    for (const shard of ACTIVE_SHARDS) {
       await queue.enqueue("payroll-chunk", { batchId, period, shard }, { jobId: `${batchId}-${shard}` });
     }
   } catch (e) {
