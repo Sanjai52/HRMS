@@ -7,7 +7,7 @@
     {
       "type": "stat",
       "title": "HTTP requests total",
-      "datasource": "Prometheus",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
           "expr": "hrms_http_requests_total",
@@ -20,10 +20,10 @@
     {
       "type": "stat",
       "title": "HTTP request p95 duration (s)",
-      "datasource": "Prometheus",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "hrms_http_request_seconds_bucket{le=\"0.5\"} / hrms_http_request_seconds_count * 100",
+          "expr": "histogram_quantile(0.95, sum(rate(hrms_http_request_seconds_bucket[5m])) by (le))",
           "format": "stat",
           "interval": ""
         }
@@ -33,7 +33,7 @@
     {
       "type": "stat",
       "title": "HTTP 5xx total",
-      "datasource": "Prometheus",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
           "expr": "rate(hrms_http_requests_total{status=~\"5..\"}[1m])",
@@ -46,7 +46,7 @@
     {
       "type": "stat",
       "title": "Pool-level avg latency (ms)",
-      "datasource": "Prometheus",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
           "expr": "avg(shard_pool_latency_seconds_avg)",

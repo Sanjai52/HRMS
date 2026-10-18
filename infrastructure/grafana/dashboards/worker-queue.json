@@ -7,7 +7,7 @@
     {
       "type": "stat",
       "title": "Jobs processed total",
-      "datasource": "Prometheus",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
           "expr": "worker_jobs_processed_total",
@@ -20,7 +20,7 @@
     {
       "type": "stat",
       "title": "Jobs failed total",
-      "datasource": "Prometheus",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
           "expr": "worker_jobs_failed_total",
@@ -33,7 +33,7 @@
     {
       "type": "stat",
       "title": "Queue waiting",
-      "datasource": "Prometheus",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
           "expr": "queue_waiting{name=\"hrms\"}",
@@ -46,7 +46,7 @@
     {
       "type": "stat",
       "title": "Queue active",
-      "datasource": "Prometheus",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
           "expr": "queue_active{name=\"hrms\"}",
@@ -59,10 +59,10 @@
     {
       "type": "graph",
       "title": "Job duration (seconds)",
-      "datasource": "Prometheus",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "histogram_quantile(0.5, sum(rate(worker_job_duration_seconds_bucket[5m])) by (le) of worker_job_duration_seconds_bucket)",
+          "expr": "histogram_quantile(0.5, sum(rate(worker_job_duration_seconds_bucket[5m])) by (le))",
           "format": "time_series",
           "interval": ""
         }
