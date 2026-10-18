@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { Pool } from "pg";
 
 const base = process.env.API_BASE ?? "http://localhost:4000";
@@ -89,7 +89,9 @@ async function getRequest(token: string, id: string): Promise<{ status: string; 
 }
 
 describe("Phase 4 attendance and leave", () => {
-  beforeAll(async () => {
+  beforeEach(async () => {
+    // This file creates >10 invited persons; the accept scope is 10/min per IP.
+    // Reset between tests so the suite exercises behavior, not the limiter budget.
     await fetch(`${base}/system/test/reset-limiter`, { method: "POST" });
   });
 

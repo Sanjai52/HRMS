@@ -34,6 +34,20 @@ async function runDispatcher(): Promise<{ delivered: number }> {
   return body.data;
 }
 
+/**
+ * The live worker's dispatcher loop races this suite's drains (both claim outbox
+ * rows with SKIP LOCKED), so whichever side delivers, the *effect* lands
+ * asynchronously. Poll the effect with a bound instead of asserting instantly.
+ */
+async function waitFor<T>(fn: () => Promise<T>, ok: (v: T) => boolean, timeoutMs = 10_000): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const v = await fn();
+    if (ok(v) || Date.now() >= deadline) return v;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+}
+
 async function adminToken(hrToken: string): Promise<string> {
   const email = `boss${Date.now()}@hrms.local`;
   const create = await fetch(`${base}/api/v1/auth/invitations`, {
@@ -84,23 +98,33 @@ describe("Phase 3 employee lifecycle", () => {
     const ob = (await onboard.json()) as { data: { employeeId: string; bucket: number; shard: string } };
     expect(stableEmployeeBucket(ob.data.employeeId)).toBe(ob.data.bucket);
 
-    const counts = await runDispatcher();
-    expect(counts.delivered).toBeGreaterThan(0);
+    await runDispatcher();
 
-    const dir = await fetch(`${base}/api/v1/employees?q=${encodeURIComponent("Hire " + tag)}`, {
-      headers: { authorization: `Bearer ${hr}` },
-    });
-    const dirBody = (await dir.json()) as { data: Array<{ employee_id: string }> };
+    const dirBody = await waitFor(
+      async () =>
+        (await (await fetch(`${base}/api/v1/employees?q=${encodeURIComponent("Hire " + tag)}`, {
+          headers: { authorization: `Bearer ${hr}` },
+        })).json()) as { data: Array<{ employee_id: string }> },
+      (b) => b.data.some((r) => r.employee_id === ob.data.employeeId),
+    );
     expect(dirBody.data.some((r) => r.employee_id === ob.data.employeeId)).toBe(true);
 
-    const suggest = await fetch(`${base}/api/v1/search/suggest?q=${encodeURIComponent("hire")}`, {
-      headers: { authorization: `Bearer ${hr}` },
-    });
-    expect(suggest.status).toBe(200);
-    const sugBody = (await suggest.json()) as { data: Array<{ employeeId: string }> };
+    const sugBody = await waitFor(
+      async () => {
+        const r = await fetch(`${base}/api/v1/search/suggest?q=${encodeURIComponent("hire")}`, {
+          headers: { authorization: `Bearer ${hr}` },
+        });
+        expect(r.status).toBe(200);
+        return (await r.json()) as { data: Array<{ employeeId: string }> };
+      },
+      (b) => b.data.some((x) => x.employeeId === ob.data.employeeId),
+    );
     expect(sugBody.data.some((r) => r.employeeId === ob.data.employeeId)).toBe(true);
 
-    if (catalogUrl) expect(await auditCount("employee.onboarded", `employee:${ob.data.employeeId}`)).toBeGreaterThan(0);
+    if (catalogUrl) {
+      const n = await waitFor(() => auditCount("employee.onboarded", `employee:${ob.data.employeeId}`), (v) => v > 0);
+      expect(n).toBeGreaterThan(0);
+    }
   });
 
   it("update is version-checked; stale writes are rejected", async () => {
@@ -128,7 +152,10 @@ describe("Phase 3 employee lifecycle", () => {
     });
     expect(stale.status).toBe(409);
     await runDispatcher();
-    if (catalogUrl) expect(await auditCount("employee.updated", `employee:${id}`)).toBeGreaterThan(0);
+    if (catalogUrl) {
+      const n = await waitFor(() => auditCount("employee.updated", `employee:${id}`), (v) => v > 0);
+      expect(n).toBeGreaterThan(0);
+    }
   });
 
   it("employee edits their own profile and the change is audited", async () => {
@@ -166,7 +193,10 @@ describe("Phase 3 employee lifecycle", () => {
     });
     expect(upd.status).toBe(200);
     await runDispatcher();
-    if (catalogUrl) expect(await auditCount("employee.profile_updated", `employee:${ob.data.employeeId}`)).toBeGreaterThan(0);
+    if (catalogUrl) {
+      const n = await waitFor(() => auditCount("employee.profile_updated", `employee:${ob.data.employeeId}`), (v) => v > 0);
+      expect(n).toBeGreaterThan(0);
+    }
   });
 
   it("deactivate removes the directory row and suggestions; rebuild repairs a lost projection", async () => {
@@ -183,9 +213,13 @@ describe("Phase 3 employee lifecycle", () => {
     });
     expect(deact.status).toBe(200);
     await runDispatcher();
-    const gone = (await (await fetch(`${base}/api/v1/employees?q=${encodeURIComponent("Hire " + tag)}`, {
-      headers: { authorization: `Bearer ${hr}` },
-    })).json()) as { data: unknown[] };
+    const gone = await waitFor(
+      async () =>
+        (await (await fetch(`${base}/api/v1/employees?q=${encodeURIComponent("Hire " + tag)}`, {
+          headers: { authorization: `Bearer ${hr}` },
+        })).json()) as { data: unknown[] },
+      (b) => b.data.length === 0,
+    );
     expect(gone.data.length).toBe(0);
 
     const rebuild = await fetch(`${base}/api/v1/admin/rebuild-directory`, {
