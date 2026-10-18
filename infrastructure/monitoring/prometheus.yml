@@ -43,7 +43,3 @@ scrape_configs:
   - job_name: "cadvisor"
     static_configs:
       - targets: ["host.docker.internal:8081"]
-
-  - job_name: "hrms-candidate-portal"
-    static_configs:
-      - targets: ["host.docker.internal:4100"]
