@@ -1,0 +1,101 @@
+Scenario F — dependency degradation: redis-kv down and redis-queue down
+Date: 2026-10-18 (evening session)  |  Pre-fix build: 290e156  |  Fix: 8e872dd
+Setup: APIs :4000/:4002/:4003 + worker :4001, baseline env (api-env.sh, no rate-limit bypass).
+Method: containers stopped/started via `docker compose stop/start redis-kv|redis-queue`;
+probes are real HTTP calls through the live API with curl -w timings; identity = live HR
+login (hr@hrms.local); limiter reset via POST /system/test/reset-limiter before rounds.
+Sidecars (verbatim raws): scenario-F-kv-probes-pre.txt, scenario-F-kv-probes-post.txt,
+scenario-F-queue-round.txt, scenario-F-client-repros.txt.
+
+=== PART 1 — redis-kv down ===
+
+-- pre-fix (290e156), raw: scenario-F-kv-probes-pre.txt --
+a) POST /api/v1/auth/refresh (reads session from KV):   500 INTERNAL           21.117430s
+b) POST /api/v1/auth/logout:                            500 INTERNAL            4.373637s
+c) GET  /api/v1/attendance/day, existing access token:  200                     0.064060s
+d) GET  /api/v1/jobs (fail-open scope):                 200                     7.254660s
+e) GET  /api/v1/s/doesnotexist probed via /api/v1
+   prefix (wrong path; app route is /s/:code):          404 (Express)           0.018081s
+   (correct-path probe in the same round returned 503 LIMITER_UNAVAILABLE ~4.4s;
+   session record only — the path was corrected in the post-fix round below)
+f) POST /api/v1/auth/login (fail-closed scope):         503 LIMITER_UNAVAILABLE  7.874416s
+Recovery: after `docker compose start redis-kv`, login returned 200.
+
+Problem visible in a,h,f: fail-closed routes held the request for the whole reconnect
+window (4.4s–44.7s across attempts) and ioredis errors fell through to 500 INTERNAL.
+
+-- post-fix (8e872dd), raw: scenario-F-kv-probes-post.txt --
+a) refresh:   503 DEPENDENCY_UNAVAILABLE   0.711130s   (was 500 @ 21.117s)
+b) logout:    503 DEPENDENCY_UNAVAILABLE   2.006543s   (was 500 @ 4.374s)
+c) attendance read, existing access token: 200  0.052539s (stateless JWT — unchanged)
+d) /api/v1/jobs:  200  2.037590s  (fail-open preserved, now bounded)
+e) GET /s/doesnotexist (correct path): 503 LIMITER_UNAVAILABLE  0.083185s
+f) login:  503 LIMITER_UNAVAILABLE  2.015765s  (was 7.874s)
+Recovery: login 200 in 0.074453s after redis-kv start.
+
+Fix (commit 8e872dd):
+- KV clients (api + worker): commandTimeout 2000 — commands queued while KV is down
+  reject in ~2s instead of waiting out the reconnect window.
+- dependencyUnavailable() additionally maps MaxRetriesPerRequestError,
+  "Connection is closed" and "Command timed out" to 503 (ioredis shapes previously
+  fell through to 500 INTERNAL).
+
+=== PART 2 — redis-queue down (payroll enqueue) ===
+
+-- pre-fix (290e156) --
+POST /api/v1/payroll/batches while redis-queue was stopped hung: curl gave up
+(HTTP 000 after 25s) and the batch row (105292747992231936, period 2026-05) was left
+PENDING. When redis-queue was started, the in-flight add flushed and the batch then ran
+normally to COMPLETED (catalog row: total=925 = done 138 + skipped 787; session record).
+
+Root cause (investigated against the installed ioredis/BullMQ; raw:
+scenario-F-client-repros.txt):
+- raw ioredis GET with maxRetriesPerRequest:1 rejects while the container is stopped
+  (217ms) — the ioredis layer can fail fast.
+- but BullMQ Queue.add() then TIMED OUT >12s with BOTH retries:1 and
+  enableOfflineQueue:false. BullMQ's RedisConnection.init() awaits
+  RedisConnection.waitUntilReady(client), which resolves only on the 'ready' event and
+  has no timeout; with retryStrategy set the client reconnects forever, so add() hung
+  until redis returned. No connection option changes that path.
+
+-- interim build (finite retries, no connect/command timeouts), raw: scenario-F-queue-round.txt (A) --
+POST while stopped (curl -m 25): HTTP 000 after 25.017017s; row (period 2026-02) still
+PENDING; the api log gained 0 lines in the whole window — on Windows the docker port
+proxy accepted the TCP connection during container teardown but never answered, so no
+error/close event fired at all. The add rejected only when the proxy finally reset and
+the route then marked the batch FAILED late.
+
+-- fix v2 (8e872dd): producer connection in BullMqJobQueue declares
+maxRetriesPerRequest:1, connectTimeout:2000, commandTimeout:2000, bounded retryStrategy,
+plus skipWaitingForReady:true on the Queue (skips BullMQ's unbounded ready-wait).
+Worker consumers keep maxRetriesPerRequest:null (blocking commands need it).
+
+-- final build (8e872dd), raw: scenario-F-queue-round.txt (B) --
+1) worst case — POST immediately after `docker compose stop redis-queue`:
+   {"success":false,"error":{"code":"QUEUE_UNAVAILABLE",...}}  HTTP 502 after 0.243131s;
+   batch FAILED (105297607995170816, period 2025-12).
+2) settled outage — POST 15s after the stop (proxy black-holing):
+   HTTP 502 after 2.036332s (commandTimeout path); batch FAILED (105297672394514432,
+   period 2025-11).
+3) no resurrection — after `docker compose start redis-queue` both FAILED rows stayed
+   FAILED and the phantom check found 0 queue keys per batch id (rejected commands were
+   dropped, not flushed later).
+4) healthy path after recovery: POST -> 202 in 0.046s; batch 105297724575850496
+   (period 2025-10) polled to COMPLETED total=925 = done 138 + skipped 787.
+5) a batch enqueued while the queue was up (105296902219657216, period 2026-01) ended
+   COMPLETED 925 = 138 + 787 on the first poll after recovery — the worker consumer
+   pauses through the outage and resumes (stall redelivery) when redis returns.
+
+Interpretation:
+- Fail-closed limiter scopes (login/accept/recover/apply/short) degrade to
+  503 LIMITER_UNAVAILABLE in <= ~2.1s; fail-open scopes (search/suggest/jobs) keep
+  serving 200 from the catalog (2.0s incl. the limiter bypass branch). The split lives
+  in apps/api/src/middleware/rate-limit.ts.
+- Sessions are stateless JWTs: existing access tokens keep working during a KV outage;
+  refresh/logout read KV and now degrade to 503 DEPENDENCY_UNAVAILABLE instead of
+  500 INTERNAL.
+- Queue enqueue failures are bounded (<= ~2.4s observed worst case), leave an honest
+  FAILED batch, and cannot resurrect or enqueue phantom jobs after recovery.
+- Residual note: right after `docker compose stop` on Windows the port proxy may accept
+  and black-hole for ~2s; commandTimeout bounds that window. Real refusals reject in
+  ~0.2s (matches the 0.243s worst-case probe).

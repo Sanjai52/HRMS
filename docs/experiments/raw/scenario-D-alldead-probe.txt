@@ -1,0 +1,13 @@
+
+-- all-backends-down probe (max_fails exhaustion, all peers dead) 2026-10-18T11:05:44Z --
+#1 -> HTTP 502 in 0.010511s
+#2 -> HTTP 502 in 0.007517s
+#3 -> HTTP 502 in 0.007355s
+#4 -> HTTP 502 in 0.006120s
+-- recovery probe after restarting all three (2026-10-18T11:06:21Z) --
+#1 HTTP/1.1 200 OK x-api-instance: 4003
+#2 HTTP/1.1 200 OK x-api-instance: 4000
+#3 HTTP/1.1 200 OK x-api-instance: 4002
+#4 HTTP/1.1 200 OK x-api-instance: 4003
+#5 HTTP/1.1 200 OK x-api-instance: 4000
+#6 HTTP/1.1 200 OK x-api-instance: 4002

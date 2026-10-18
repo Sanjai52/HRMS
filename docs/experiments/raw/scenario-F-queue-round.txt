@@ -1,0 +1,55 @@
+=== A. interim build (finite retries, no connect/command timeouts): POST while redis-queue down ===
+note: the api log gained 0 lines during the whole 25s window (silent client; the Windows docker port proxy accepted TCP but never answered, so no error/close event fired).
+
+### A. healthy POST (queue up), period 2026-01
+{"success":true,"data":{"batchId":"105296902219657216","period":"2026-01","status":"PENDING"}}
+HTTP 202 after 0.046418s
+
+### B. outage POST (queue down), period 2026-02
+[curl output:]
+
+HTTP 000 after 25.017017s
+[batch row now:]
+ 105296915398160384 | 2026-02 | PENDING
+
+
+=== B. final build 8e872dd: full queue outage round (stdout of scenario-f-final.sh) ===
+
+### health
+:4000 -> 200
+:4002 -> 200
+:4003 -> 200
+token ok
+### 0. after queue restore: 2026-01 batch (enqueued while queue was up)
+poll 1: COMPLETED total=925 done=138 failed=0 skipped=787
+### 1. worst case: POST immediately after container stop (proxy mid-teardown), period 2025-12
+{"success":false,"error":{"code":"QUEUE_UNAVAILABLE","message":"Payroll queue is unavailable. The batch was marked failed."}}
+HTTP 502 after 0.243131s
+### 2. settled outage: sleep 15 -> POST, period 2025-11
+{"success":false,"error":{"code":"QUEUE_UNAVAILABLE","message":"Payroll queue is unavailable. The batch was marked failed."}}
+HTTP 502 after 2.036332s
+### 3. rows now (expect 2025-12 and 2025-11 FAILED)
+      batch_id      | period  |  status   
+--------------------+---------+-----------
+ 105297672394514432 | 2025-11 | FAILED
+ 105297607995170816 | 2025-12 | FAILED
+ 105296915398160384 | 2026-02 | FAILED
+ 105296902219657216 | 2026-01 | COMPLETED
+(4 rows)
+
+### 4. recovery: start queue, wait, verify no resurrection
+      batch_id      | period  |  status   
+--------------------+---------+-----------
+ 105297672394514432 | 2025-11 | FAILED
+ 105297607995170816 | 2025-12 | FAILED
+ 105296915398160384 | 2026-02 | FAILED
+ 105296902219657216 | 2026-01 | COMPLETED
+(4 rows)
+
+phantom check batch 105297607995170816 -> 0 queue key(s)
+phantom check batch 105297672394514432 -> 0 queue key(s)
+### 5. healthy POST after recovery, period 2025-10
+{"success":true,"data":{"batchId":"105297724575850496","period":"2025-10","status":"PENDING"}}
+batchId=105297724575850496; polling until terminal...
+poll 1: RUNNING total=0 done=0 failed=0 skipped=0
+poll 2: COMPLETED total=925 done=138 failed=0 skipped=787

@@ -1,0 +1,37 @@
+=== library-level: raw ioredis GET vs BullMQ add while redis-queue stopped ===
+
+raw GET (retries:1): rejected after 217 ms -> MaxRetriesPerRequestError: Reached the max retries per request limit (which is 1). Refer to "maxRetriesPerRequest" option for d
+bullmq add (retries:1): TIMEOUT (>12s)
+bullmq add (offlineQueue:false): TIMEOUT (>12s)
+
+=== shipped BullMqJobQueue (skipWaitingForReady build): fresh client while redis-queue stopped ===
+
+queue error: 
+queue error: 
+queue error: Reached the max retries per request limit (which is 1). Refer to "maxRetriesPerRequest" option for details.
+enqueue REJECTED after 221 ms -> MaxRetriesPerRequestError: Reached the max retries per request limit (which is 1). Refer to "maxRetriesPerRequest" op
+queue error: 
+[t] conn status: reconnecting
+queue error: 
+[t] conn status: reconnecting
+queue error: 
+[t] conn status: reconnecting
+queue error: 
+[t] conn status: reconnecting
+queue error: 
+[t] conn status: reconnecting
+queue error: 
+[t] conn status: reconnecting
+[t] conn status: reconnecting
+queue error: 
+[t] conn status: reconnecting
+[t] conn status: connecting
+queue error: 
+[t] conn status: reconnecting
+queue error: 
+[t] conn status: reconnecting
+[t] conn status: reconnecting
+queue error: 
+[t] conn status: reconnecting
+[t] conn status: reconnecting
+final: settled = true

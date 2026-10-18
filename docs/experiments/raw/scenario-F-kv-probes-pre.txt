@@ -1,0 +1,26 @@
+### PROBE a: refresh (session read in KV; closed by dependency)
+{"success":false,"error":{"code":"INTERNAL","message":"Something went wrong"}}
+HTTP 500 after 21.117430s
+### PROBE b: logout
+{"success":false,"error":{"code":"INTERNAL","message":"Something went wrong"}}
+HTTP 500 after 4.373637s
+### PROBE c: existing access token read (stateless JWT)
+HTTP 200 after 0.064060s
+### PROBE d: public jobs list (fail-open 'jobs' scope)
+HTTP 200 after 7.254660s
+### PROBE e: short link (fail-closed 'short' scope)
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Error</title>
+</head>
+<body>
+<pre>Cannot GET /api/v1/s/doesnotexist</pre>
+</body>
+</html>
+
+HTTP 404 after 0.018081s
+### PROBE f: new login (fail-closed 'login' scope)
+{"success":false,"error":{"code":"LIMITER_UNAVAILABLE","message":"Request throttling is unavailable. Try again shortly."}}
+HTTP 503 after 7.874416s

@@ -1,0 +1,16 @@
+### POST-FIX (commit 8e872dd) PROBE a: refresh (kv down)
+{"success":false,"error":{"code":"DEPENDENCY_UNAVAILABLE","message":"A backend dependency is unavailable; retry shortly"}}
+HTTP 503 after 0.711130s
+### PROBE b: logout (kv down)
+{"success":false,"error":{"code":"DEPENDENCY_UNAVAILABLE","message":"A backend dependency is unavailable; retry shortly"}}
+HTTP 503 after 2.006543s
+### PROBE c: existing access token read
+HTTP 200 after 0.052539s
+### PROBE d: public jobs list (fail-open)
+HTTP 200 after 2.037590s
+### PROBE e: short link /s/doesnotexist (fail-closed)
+{"success":false,"error":{"code":"LIMITER_UNAVAILABLE","message":"Request throttling is unavailable. Try again shortly."}}
+HTTP 503 after 0.083185s
+### PROBE f: login (fail-closed)
+{"success":false,"error":{"code":"LIMITER_UNAVAILABLE","message":"Request throttling is unavailable. Try again shortly."}}
+HTTP 503 after 2.015765s
