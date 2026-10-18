@@ -1,0 +1,11 @@
+groups:
+  - name: RedisKvMemoryHigh
+    rules:
+      - alert: RedisKvMemoryHigh
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis KV memory usage above 80%"
+          description: "Redis KV memory used ({{ $value | humanize }}) exceeds 80% of max for 5 consecutive minutes. Current allocation may cause OOM or eviction."

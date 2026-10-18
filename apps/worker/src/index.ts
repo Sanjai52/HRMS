@@ -1,7 +1,9 @@
 import "dotenv/config";
+import { createServer } from "node:http";
 import { Worker, type Job, Queue } from "bullmq";
 import { Redis } from "ioredis";
 import nodemailer from "nodemailer";
+import client from "prom-client";
 import type { JobName } from "@hrms/core";
 import { runDispatcherOnce, loadActiveMap, runPayrollChunk, createIdIssuer, registrationValid, type IdIssuer } from "@hrms/core";
 import { runCrawlRun } from "./crawl.js";
@@ -9,6 +11,33 @@ import { catalogPool as catalog, shardPools as shards } from "./pools.js";
 
 const REGISTRY_TTL_MS = Number(process.env.REGISTRY_TTL_MS ?? 30000);
 const REGISTRY_MARGIN_MS = Number(process.env.REGISTRY_MARGIN_MS ?? 10000);
+
+// ---- Prometheus metrics (HTTP server on WORKER_METRICS_PORT, default 4001) ----
+client.collectDefaultMetrics();
+
+const jobsProcessed = new client.Counter({
+  name: "worker_jobs_processed_total",
+  help: "Jobs completed successfully, by job name",
+  labelNames: ["name"],
+});
+
+const jobsFailed = new client.Counter({
+  name: "worker_jobs_failed_total",
+  help: "Jobs that exhausted all attempts and moved to failed, by job name",
+  labelNames: ["name"],
+});
+
+const jobDuration = new client.Histogram({
+  name: "worker_job_duration_seconds",
+  help: "Job processing time from start to finish, by job name",
+  labelNames: ["name"],
+  buckets: [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60],
+});
+
+const queueWaiting = new client.Gauge({ name: "queue_waiting", help: "Jobs currently waiting in the queue", labelNames: ["name"] });
+const queueActive = new client.Gauge({ name: "queue_active", help: "Jobs currently being processed", labelNames: ["name"] });
+const queueCompleted = new client.Gauge({ name: "queue_completed", help: "Completed jobs retained in the queue", labelNames: ["name"] });
+const queueFailed = new client.Gauge({ name: "queue_failed", help: "Failed jobs retained in the queue", labelNames: ["name"] });
 
 // Monotonic time of the worker's last heartbeat that reached the registry.
 let lastHeartbeatSentMono: number | null = null;
@@ -167,8 +196,49 @@ async function handle(job: Job): Promise<unknown> {
 }
 
 const worker = new Worker("hrms", handle, { connection: queueConnection });
-worker.on("completed", (job) => console.log(`worker completed ${job.id} (${job.name})`));
-worker.on("failed", (job, err) => console.log(`worker failed ${job?.id} (${job?.name}): ${err.message}`));
+worker.on("completed", (job) => {
+  const name = job.name || "unknown";
+  jobsProcessed.inc({ name });
+  if (job.processedOn && job.finishedOn && job.finishedOn >= job.processedOn) {
+    jobDuration.observe({ name }, (job.finishedOn - job.processedOn) / 1000);
+  }
+  console.log(`worker completed ${job.id} (${job.name})`);
+});
+worker.on("failed", (job, err) => {
+  // BullMQ emits "failed" on every attempt; count only the final failure.
+  if (job) {
+    const name = job.name || "unknown";
+    if (job.attemptsMade >= (job.opts.attempts ?? 1)) jobsFailed.inc({ name });
+  }
+  console.log(`worker failed ${job?.id} (${job?.name}): ${err.message}`);
+});
+
+const metricsPort = Number(process.env.WORKER_METRICS_PORT ?? 4001);
+const metricsServer = createServer(async (req, res) => {
+  if (req.url === "/metrics") {
+    res.setHeader("content-type", client.register.contentType);
+    res.end(await client.register.metrics());
+    return;
+  }
+  res.statusCode = 404;
+  res.end("not found");
+});
+metricsServer.on("error", (e) => console.error("worker metrics server error:", e.message));
+metricsServer.listen(metricsPort, () => console.log(`worker metrics on :${metricsPort}`));
+
+async function pollQueueCounts(): Promise<void> {
+  try {
+    const counts = await queue.getJobCounts("waiting", "active", "completed", "failed");
+    queueWaiting.set({ name: "hrms" }, counts.waiting ?? 0);
+    queueActive.set({ name: "hrms" }, counts.active ?? 0);
+    queueCompleted.set({ name: "hrms" }, counts.completed ?? 0);
+    queueFailed.set({ name: "hrms" }, counts.failed ?? 0);
+  } catch {
+    // redis momentarily unavailable: keep the last observed counts
+  }
+}
+pollQueueCounts();
+setInterval(pollQueueCounts, 15_000).unref?.();
 
 async function dispatchLoop(): Promise<void> {
   try {

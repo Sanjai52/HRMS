@@ -1,0 +1,63 @@
+{
+  "title": "HRMS API Overview",
+  "uid": "api-overview",
+  "tags": ["hrms", "api", "overview"],
+  "timezone": "browser",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "HTTP requests total",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "hrms_http_requests_total",
+          "format": "time_series",
+          "interval": ""
+        }
+      ],
+      "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4}
+    },
+    {
+      "type": "stat",
+      "title": "HTTP request p95 duration (s)",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "hrms_http_request_seconds_bucket{le=\"0.5\"} / hrms_http_request_seconds_count * 100",
+          "format": "stat",
+          "interval": ""
+        }
+      ],
+      "gridPos": {"x": 6, "y": 0, "w": 6, "h": 4}
+    },
+    {
+      "type": "stat",
+      "title": "HTTP 5xx total",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "rate(hrms_http_requests_total{status=~\"5..\"}[1m])",
+          "format": "time_series",
+          "interval": ""
+        }
+      ],
+      "gridPos": {"x": 0, "y": 4, "w": 6, "h": 4}
+    },
+    {
+      "type": "stat",
+      "title": "Pool-level avg latency (ms)",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "avg(shard_pool_latency_seconds_avg)",
+          "format": "time_series",
+          "interval": ""
+        }
+      ],
+      "gridPos": {"x": 6, "y": 4, "w": 6, "h": 4}
+    }
+  ],
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "15s"
+}

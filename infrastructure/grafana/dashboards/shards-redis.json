@@ -1,0 +1,50 @@
+{
+  "title": "HRMS Shards & Redis",
+  "uid": "shards-redis",
+  "tags": ["hrms", "shards", "redis"],
+  "timezone": "browser",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Active PG connections",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "pg_stat_activity_count",
+          "format": "time_series",
+          "interval": ""
+        }
+      ],
+      "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4}
+    },
+    {
+      "type": "stat",
+      "title": "Redis memory usage %",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "redis_memory_used_bytes / redis_memory_max_bytes * 100",
+          "format": "time_series",
+          "interval": ""
+        }
+      ],
+      "gridPos": {"x": 6, "y": 0, "w": 6, "h": 4}
+    },
+    {
+      "type": "stat",
+      "title": "429 rejects by scope",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": 'rate_limit_rejected_total{scope=~"login|accept|search|crawl|publicJobs|suggest"}',
+          "format": "time_series",
+          "interval": ""
+        }
+      ],
+      "gridPos": {"x": 0, "y": 4, "w": 12, "h": 4}
+    }
+  ],
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "15s"
+}

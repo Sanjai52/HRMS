@@ -104,6 +104,97 @@ services:
     depends_on:
       - redis-queue
 
+  cadvisor:
+    image: google/cadvisor:latest
+    profiles: ["observability"]
+    command: ["-http", ":8080"]
+    ports:
+      - "8081:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /:root:ro
+
+  postgres-exporter-catalog:
+    image: postgres-exporter
+    profiles: ["observability"]
+    command:
+      - -web.listen-address=":9100"
+      - -pg.sslmode=disable
+      - -pg.user=hrms
+      - -pg.password=hrms
+      - -pg.database=hrms_catalog
+      - -collectors.discovery=false
+    ports:
+      - "9101:9100"
+
+  postgres-exporter-shard-1:
+    image: postgres-exporter
+    profiles: ["observability"]
+    command:
+      - -web.listen-address=":9100"
+      - -pg.sslmode=disable
+      - -pg.user=hrms
+      - -pg.password=hrms
+      - -pg.database=hrms_shard1
+      - -collectors.discovery=false
+    ports:
+      - "9102:9100"
+
+  postgres-exporter-shard-2:
+    image: postgres-exporter
+    profiles: ["observability"]
+    command:
+      - -web.listen-address=":9100"
+      - -pg.sslmode=disable
+      - -pg.user=hrms
+      - -pg.password=hrms
+      - -pg.database=hrms_shard2
+      - -collectors.discovery=false
+    ports:
+      - "9103:9100"
+
+  postgres-exporter-shard-3:
+    image: postgres-exporter
+    profiles: ["observability"]
+    command:
+      - -web.listen-address=":9100"
+      - -pg.sslmode=disable
+      - -pg.user=hrms
+      - -pg.password=hrms
+      - -pg.database=hrms_shard3
+      - -collectors.discovery=false
+    ports:
+      - "9104:9100"
+
+  postgres-exporter-shard-4:
+    image: postgres-exporter
+    profiles: ["observability"]
+    command:
+      - -web.listen-address=":9100"
+      - -pg.sslmode=disable
+      - -pg.user=hrms
+      - -pg.password=hrms
+      - -pg.database=hrms_shard4
+      - -collectors.discovery=false
+    ports:
+      - "9105:9100"
+
+  redis-exporter-queue:
+    image: oliver006/redis-exporter
+    profiles: ["observability"]
+    command:
+      - -redis.addr="redis-queue:6379"
+    ports:
+      - "9121:9121"
+
+  redis-exporter-kv:
+    image: oliver006/redis-exporter
+    profiles: ["observability"]
+    command:
+      - -redis.addr="redis-kv:6380"
+    ports:
+      - "9122:9121"
+
   prometheus:
     image: prom/prometheus:latest
     profiles: ["observability"]
