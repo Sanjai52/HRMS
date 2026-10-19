@@ -30,6 +30,9 @@ thresholds; those raws end at `3m58.8–3m58.9s/4m0s` (medium) and `1m19.9s/1m20
 the `✓` runs (low `3m0s`, high `6m0s`) completed their full duration. The end-of-run JSON
 summaries are the record.
 
+The 9 AM burst row doubles as scenario G of the acceptance-gap plan ("tabulated in Task 2;
+reference it") — same raws `burst-r{1,2,3}.txt`; no separate rerun was made.
+
 (Project targets are the thresholds the load scripts enforce: overall p95<2000 ms / p99<4000 ms
 (`tests/load/mixed.js:29`); 9 AM burst `http_req_failed`<15% and check-in p95<3000 ms / p99<6000 ms
 (`tests/load/burst.js:23-24`). Measured medians: low 71 ms, medium 117 ms, high 41 ms p95; burst
@@ -49,10 +52,13 @@ failed 0% — all clear.)
 
 | Scenario | Outcome |
 |---|---|
-| B shard-add migration | COMPLETED: 64 buckets, 134 rows, checksums match, directory counts equal, gates reopened |
-| Shard-2 outage | — |
-| Catalog outage | — |
-| API kill + NGINX recovery | — |
+| B + K shard-add migration (`scenario-K.txt`) | COMPLETED — live run `105573391162945536` (2026-10-19): 64 buckets moved, 8,801 rows copied (`estimatedRows` = `copiedRows` in `migration_runs.metrics`), checksum verify passed, directory counts equal, gates reopened. Task 8 tests: migration.test.ts 2/2, migration-gate.test.ts 3/3 (drain, stale writer, rollback), fence-coverage.test.ts 1/1. The earlier "134 rows" figure was the Phase 9 pilot count on the freshly seeded dataset; replaced per the evidence rule. K also caught and fixed a snapshot-staleness 404 (onboard → first action now 201 in ~0.06 s). |
+| C replica scaling (`scenario-C.txt`) | NGINX round-robin across :4000/:4002/:4003 (6/6 probe via `x-api-instance`); mixed-medium with 3 backends: 0% failed, p95 62 vs single-replica medians 117 [27–120] (comparative, same laptop; balancing policy round-robin, `max_fails=2 fail_timeout=10s`). |
+| D API kill + NGINX recovery (`scenario-D.txt`) | 0 failed of 6,330 reqs while one replica was killed mid-run; dead peer marked down after `max_fails=2`, retried after `fail_timeout=10s`; all-peers-down probe → 502 in ~7–10 ms; restarted replica rejoins with no intervention. |
+| E worker kill/retry, payroll (`scenario-E.txt`) | Batch stays RUNNING with honest partial totals while the worker is dead; restart redelivery → COMPLETED 906 = 128 + 778; 0 duplicate (employee_id, period) rows on all 4 shards. |
+| F Redis KV/queue outage (`scenario-F.txt`) | Fail-closed scopes → 503 in ≤2.1 s; fail-open scopes keep 200; refresh/logout 503 (was 500); queue POST bounded ≤2.4 s → `QUEUE_UNAVAILABLE` + honest FAILED batches, 0 phantom queue keys; healthy POST 202 → COMPLETED afterwards. |
+| I shard-2 outage (`scenario-I.txt`) | Routed writes 503 `DEPENDENCY_UNAVAILABLE` @0.03 s; scatter reads 200 with `meta.partial` + `unavailable:["shard-2"]`; recovery idempotent (duplicate check-in returns the original row). |
+| J catalog outage + local deadline (`scenario-J.txt`) | Login/search 503 in ~2.0 s; shard-local writes live to last-heartbeat + 20 s, then 503 `GATE_CLOSED` (@20.86 s observed); snapshot-routed reads 200; writes resume ≤ one heartbeat after postgres is ready (4.03 s). Worker survives (pool guard). |
 
 ## Limitations
 

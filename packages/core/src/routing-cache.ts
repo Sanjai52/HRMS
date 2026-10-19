@@ -12,8 +12,14 @@ import { loadActiveMap, resolveShard, type ActiveMap, type Queryable } from "./s
 export class RoutingCache {
   private activeMap: { version: number; map: ActiveMap } | null = null;
   private identity: Map<string, string> | null = null;
+  private lastMissRefreshMs = Number.NEGATIVE_INFINITY;
 
-  constructor(private readonly catalog: Queryable) {}
+  constructor(
+    private readonly catalog: Queryable,
+    // Minimum interval between catalog re-reads triggered by an identity miss
+    // (a snapshot that predates a just-created directory row).
+    private readonly missRefreshThrottleMs = 1000
+  ) {}
 
   /** Diagnostics for tests and health endpoints. */
   state(): { mapVersion: number | null; identitySize: number } {
@@ -40,9 +46,25 @@ export class RoutingCache {
     return resolveShard(employeeId, this.activeMap.map);
   }
 
-  /** employee_id for a user id, from the snapshot (lazy-loads once when empty). */
+  /**
+   * employee_id for a user id, from the snapshot (lazy-loads once when empty).
+   *
+   * A miss may simply mean the snapshot predates a directory row that landed
+   * moments ago (onboarding -> first self-service action must not 404), so a
+   * miss re-reads the identity once, throttled so unknown-user traffic cannot
+   * amplify into one full read per request. During a catalog outage a miss
+   * throws (callers surface a dependency error — fail closed); known users are
+   * served from the snapshot without touching the catalog.
+   */
   async employeeIdOf(userId: string): Promise<string | null> {
     if (!this.identity) this.identity = await this.loadIdentity();
+    const hit = this.identity.get(userId);
+    if (hit !== undefined) return hit;
+    const now = Date.now();
+    if (now - this.lastMissRefreshMs >= this.missRefreshThrottleMs) {
+      this.lastMissRefreshMs = now;
+      this.identity = await this.loadIdentity();
+    }
     return this.identity.get(userId) ?? null;
   }
 
