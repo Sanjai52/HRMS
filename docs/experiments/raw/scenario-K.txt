@@ -26,11 +26,21 @@ landed, so K was the first run to expose it. Before the snapshot, the lookup was
 catalog read and could not go stale.
 
 Fix (in `RoutingCache.employeeIdOf`, packages/core/src/routing-cache.ts): a miss re-reads the
-identity once, throttled to one read per second. Known users still resolve from the snapshot
-without touching the catalog; during a catalog outage a miss throws (routes surface a dependency
-error — fail closed), and unknown-user traffic cannot amplify into one full read per request.
-New core tests: miss re-read (fresh employee visible immediately) and throttling
+identity, with concurrent readers sharing one in-flight load (single-flight). Known users
+still resolve from the snapshot without touching the catalog; during a catalog outage a miss
+throws (routes surface a dependency error — fail closed); there is no time window in which a
+fresh directory row stays invisible.
+New core tests: miss re-read (fresh employee visible immediately) and single-flight
 (packages/core/test/routing-cache.test.ts, 6/6).
+
+Follow-up (same day): the first iteration of the fix throttled miss re-reads to one per
+second. The focused K set passed, but the full serial API suite failed 2/7 in
+attendance-leave.test.ts ("expected 404 to be 201/409" on a fresh person's first action):
+a miss that arrived inside another user's throttle window skipped the re-read and read the
+stale snapshot. The time throttle was replaced with single-flight dedupe (always correct on
+miss; concurrent misses share one query; unknown-user traffic is bounded by the endpoint rate
+limits). Re-verified after rebuild + API restart: attendance-leave.test.ts 7/7 (13:32 IST),
+then the full suite 23 files / 72 passed | 1 skipped in 188 s (api-suite-postK2.log).
 
 Fix verification (scenario-K-missrefresh-repro.txt): onboard -> run-dispatcher -> IMMEDIATE
   POST /leave/requests: HTTP 201 after 0.057333 s (was 404)
@@ -66,5 +76,5 @@ Interpretation: the Task 8 machinery (drain semantics, stale-writer fencing thro
 gates, smoke-failure rollback with same-epoch CAS and audit) and the full shard-add migration
 all pass on the live stack, with the migration's own metrics as the recorded source. Scenario K
 also caught one real regression from the J snapshot work (new-employee 404 within the 5 s
-refresh window) — fixed with a throttled miss re-read and re-run green before this pass was
-recorded.
+refresh window) — fixed with a single-flight miss re-read and re-verified (focused set + full
+suite) before this pass was recorded.

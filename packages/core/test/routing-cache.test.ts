@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import { buildMapV1 } from "../src/shard-router.js";
 import { stableEmployeeBucket } from "../src/bucket.js";
 import { RoutingCache } from "../src/routing-cache.js";
@@ -37,8 +37,6 @@ function identityCalls(fake: FakeCatalog): number {
 }
 
 describe("RoutingCache (D-002 snapshot)", () => {
-  afterEach(() => vi.useRealTimers());
-
   it("resolves shard + identity from a refresh", async () => {
     const cache = new RoutingCache(new FakeCatalog());
     await cache.refresh();
@@ -79,7 +77,7 @@ describe("RoutingCache (D-002 snapshot)", () => {
 
   it("a miss re-reads identity so a just-projected employee works immediately", async () => {
     const fake = new FakeCatalog();
-    const cache = new RoutingCache(fake, 0);
+    const cache = new RoutingCache(fake);
     await cache.refresh();
     const before = identityCalls(fake);
     // The directory row lands after the last snapshot refresh (onboarding ->
@@ -90,19 +88,17 @@ describe("RoutingCache (D-002 snapshot)", () => {
     expect(await cache.employeeIdOf("nope")).toBeNull();
   });
 
-  it("throttles miss re-reads for genuinely unknown users", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-10-19T00:00:00.000Z"));
+  it("shares one in-flight identity load across concurrent misses", async () => {
     const fake = new FakeCatalog();
-    const cache = new RoutingCache(fake); // default 1 s throttle
+    const cache = new RoutingCache(fake);
     await cache.refresh();
     const before = identityCalls(fake);
-    expect(await cache.employeeIdOf("nope-1")).toBeNull();
-    expect(identityCalls(fake)).toBe(before + 1); // miss -> one re-read
-    expect(await cache.employeeIdOf("nope-2")).toBeNull();
-    expect(identityCalls(fake)).toBe(before + 1); // throttled: no second read
-    vi.setSystemTime(new Date(Date.now() + 1001));
-    expect(await cache.employeeIdOf("nope-3")).toBeNull();
-    expect(identityCalls(fake)).toBe(before + 2); // window elapsed -> re-read again
+    const [x, y, z] = await Promise.all([cache.employeeIdOf("nope-1"), cache.employeeIdOf("nope-2"), cache.employeeIdOf("nope-3")]);
+    expect([x, y, z]).toEqual([null, null, null]);
+    expect(identityCalls(fake)).toBe(before + 1); // single-flight
+    // A later miss re-reads again: no time window in which a fresh row stays invisible.
+    fake.identityRows.push({ user_id: "u-late", employee_id: "e-late" });
+    expect(await cache.employeeIdOf("u-late")).toBe("e-late");
+    expect(identityCalls(fake)).toBe(before + 2);
   });
 });
