@@ -14,7 +14,7 @@ export type { BucketResult } from "./rate-limit.js";
 export { RedisKvStore } from "./kv.js";
 export type { KvStore, KvRedisClient } from "./kv.js";
 export { Snowflake, ClockBackwardError, LeaseExpiredError, acquireWorkerLease, renewWorkerLease, SNOWFLAKE_EPOCH, WORKER_LEASE_TTL_MS, WORKER_LEASE_RENEW_MS, WORKER_LEASE_MARGIN_MS } from "./snowflake.js";
-export { AUTOCOMPLETE_DOMAIN, AUTOCOMPLETE_SCOPE, AUTOCOMPLETE_MAX_PREFIX, AUTOCOMPLETE_TOP_K, normalizePrefix, prefixesFor, suggestKey, suggestMember, parseSuggestMember } from "./autocomplete.js";
+export { AUTOCOMPLETE_DOMAIN, AUTOCOMPLETE_SCOPE, AUTOCOMPLETE_MAX_PREFIX, AUTOCOMPLETE_TOP_K, AUTOCOMPLETE_TTL_SECONDS, JOBS_AUTOCOMPLETE_DOMAIN, JOBS_AUTOCOMPLETE_SCOPE, normalizePrefix, prefixesFor, suggestKey, suggestMember, parseSuggestMember, jobsSuggestKey, jobSuggestMember, parseJobSuggestMember } from "./autocomplete.js";
 export { runDispatcherOnce } from "./dispatcher.js";
 export type { DispatcherHandles, DispatchCounts } from "./dispatcher.js";
 export { ORG_TIMEZONE, LATE_AFTER, workdayOf, clockNow, isLate, countWorkdays } from "./leave-rules.js";

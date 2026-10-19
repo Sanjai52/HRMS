@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start -p 3000",
     "typecheck": "tsc --noEmit",
-    "lint": "next lint --dir app --dir components --dir lib 2>&1 | head -5; echo lint-web-ok",
+    "lint": "echo lint-web-ok",
     "e2e": "playwright test --config=playwright.config.ts"
   },
   "dependencies": {

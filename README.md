@@ -93,8 +93,9 @@ limiter can never be spoofed by a client.
 ## Verify
 
 ```bash
-npm run ci                                   # typecheck + lint + pool-access guard + workspace tests
+npm run ci                                   # typecheck + lint + ownership/pool guards + workspace tests
 bash scripts/check-direct-pool-access.sh     # direct shard-pool access ban (D-007)
+node scripts/check-shard-owned-tables.mjs    # migration ownership declarations (NFR-MIG-03)
 
 set -a && . ./.env && set +a
 MAIL_LIVE=1 npm --workspace @hrms/api run test             # serial API suite (stack up)

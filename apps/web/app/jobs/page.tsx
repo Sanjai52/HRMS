@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowRight, MapPin } from "@phosphor-icons/react/dist/ssr";
 import { Button, Card } from "../../components/ui";
+import { JobsSearch } from "../../components/jobs-search";
 
 async function jobs() {
   const base = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:4000";
@@ -30,6 +31,7 @@ export default async function JobsPage() {
       <main className="mx-auto max-w-7xl px-4 py-12 md:px-8">
         <h1 className="text-3xl font-extrabold tracking-tight text-hof md:text-4xl">Open roles</h1>
         <p className="mt-2 max-w-[60ch] leading-relaxed text-foggy">Find a role that fits and apply in minutes.</p>
+        <JobsSearch />
         <div className="mt-8 grid gap-4 md:grid-cols-2">
           {rows.length === 0 && (
             <Card className="p-8 text-center md:col-span-2">
