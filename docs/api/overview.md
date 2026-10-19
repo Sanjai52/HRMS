@@ -32,7 +32,7 @@ is the only network allowed to set `X-Forwarded-For` (`apps/api/src/index.ts:29-
 | performance | `/performance` | `HR`/`ADMIN` cycles; employee goals/self-review; manager team reviews | — | review cycle state machine |
 | notifications | `/notifications` | authenticated (own rows) | — | unread/read state per employee |
 | search | `/search` | authenticated; `suggest` open-fail scope | `search`, `suggest` | autocomplete K/prefix/TTL/ranking per D-009 |
-| short links | `/s/:code` on `/api/v1` | public | `short` | resolves to the long destination; allow-list enforced |
+| short links | `POST /api/v1/short-urls` (create); public `GET /s/:code` (root) | `HR`/`ADMIN` create; public redirect | `short` | resolves to the long destination; allow-list enforced |
 | admin | `/admin` | `ADMIN` only | — | audit logs, directory rebuild, shard list/preview/migrate/runs, settings |
 | system (test) | `/system/test/*` | env-gated: `ALLOW_TEST_LIMITER_RESET=true` | — | `reset-limiter`, `run-dispatcher`; never enabled in production |
 | health | `/health`, `/system/map-version` | public | — | liveness + active map version readback |
