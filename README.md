@@ -1,10 +1,21 @@
 # HRMS — Scalable Human Resource Management System
 
 UCS3513 System Design Laboratory, Mini Project 6. Enterprise HR workflows on an
-explicitly sharded platform. See [PRD.md](PRD.md), [docs/status.md](docs/status.md) for the
-phase tracker, [docs/decisions.md](docs/decisions.md) for every recorded decision,
-[docs/evaluation.md](docs/evaluation.md) for measured results, and
-[docs/design-system.md](docs/design-system.md) for UI rules.
+explicitly sharded platform.
+
+**Status: complete and verified.** Every PRD v2.5 phase (1a–10) is implemented; the optional
+AWS phase (11) is deferred by design. The PRD §34 acceptance walk covers all 88 items with
+per-item evidence in [docs/evaluation.md](docs/evaluation.md), and the post-PRD compliance
+report — functional requirements, the eight system-design components, infrastructure and
+measured results — is [docs/report.md](docs/report.md).
+
+Documentation map: [PRD.md](PRD.md) · [docs/report.md](docs/report.md) ·
+[docs/status.md](docs/status.md) (phase tracker) · [docs/decisions.md](docs/decisions.md)
+(D-001–D-020) · [docs/evaluation.md](docs/evaluation.md) (measured results + §34 walk) ·
+[docs/api/overview.md](docs/api/overview.md) (routes, RBAC, limiter scopes) ·
+[docs/shard-owned-tables.md](docs/shard-owned-tables.md) (table-ownership manifest) ·
+[docs/experiments/00-method.md](docs/experiments/00-method.md) (measurement method) ·
+[docs/design-system.md](docs/design-system.md) (UI rules).
 
 ## Quick start
 
@@ -106,6 +117,11 @@ k6 run -e API=http://localhost:8080 tests/load/smoke.js
 k6 run -e API=http://localhost:8080 -e PROFILE=medium tests/load/mixed.js
 k6 run -e API=http://localhost:8080 tests/load/burst.js
 ```
+
+Last verified (2026-10-19, full stack up): `npm run ci` exit 0 — typecheck 5/5
+workspaces, lint, `pool-access-ok`, `shard-owned-tables-ok (16/16)`, API **24 files / 73
+passed | 1 skipped**, core **13 files / 40 passed | 4 skipped**; Playwright e2e **14/14**;
+k6 smoke **121/121 checks, 0% failed** (3 API replicas + worker + web behind NGINX).
 
 Scenario evidence (queue/KV/catalog/shard outages, API kill, migrations) lives in
 `docs/experiments/raw/scenario-*.txt` and is tabulated in
