@@ -15,7 +15,11 @@ export async function createIdIssuer(catalog: Queryable, owner: string): Promise
     try {
       validUntil = await renewWorkerLease(catalog, lease.workerId, owner);
     } catch {
-      validUntil = 0;
+      // D-003: the local window is last-successful-renewal + TTL − margin
+      // (~45 s); it is not cut short by a failed attempt. The 15 s margin
+      // before the DB lease expires keeps a reclaimer from overlapping, and
+      // the D-002 registration deadline (~20 s) is what stops shard writes
+      // earlier. `next()` still fails closed once the window lapses.
     }
   }, WORKER_LEASE_RENEW_MS);
   timer.unref?.();

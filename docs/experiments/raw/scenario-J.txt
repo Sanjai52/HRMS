@@ -1,0 +1,104 @@
+Scenario J — catalog outage: fail-closed logins/search, shard-local writes survive to the
+local deadline, writes resume after recovery
+Date: 2026-10-19 (morning session)  |  Commit: f82fb91 + this task's fixes (shipped with this
+file; see git log)
+Setup: full stack (pg-catalog, shard-1..4, redis-kv, redis-queue) up; APIs :4000/:4002/:4003
+and worker :4001; NGINX not involved (direct :4000); live HR session; fresh employee created
+per round via invite -> accept -> onboard and its projection confirmed before the stop.
+Method: real HTTP against api :4000; `docker compose stop pg-catalog` / `start pg-catalog`;
+exact curl outputs; timing model = registry heartbeat every 5 s, TTL 30 s, margin 10 s =>
+local write deadline = last successful heartbeat send + 20 s (D-002).
+Raws: scenario-J-run.txt (round 1, pre-fix), scenario-J-run2.txt (round 2, full run),
+scenario-J-recovery.txt (rounds 3-4, recovery precision), worker-fixJ.log (crash),
+worker-fixJ2.log (guard fix in place).
+
+-- round 1 (pre-fix build; scenarios-J-run.txt) --
+Two mismatches found and fixed in the owning tasks before recording any pass (T20 rule):
+
+1. D-002 intent vs built routing path: `selfEmployeeId` + `shardFor` re-read the catalog per
+   request, so a catalog outage killed writes at 503 DEPENDENCY_UNAVAILABLE before the fence
+   could run, and the local deadline was unreachable over HTTP.
+   Fix: `RoutingCache` (core) + API wiring — the routing map and user->employee identity are
+   snapshotted in-process and refreshed on each registry heartbeat; a failed refresh keeps the
+   last snapshot, and the registry's local deadline bounds how long it may be trusted.
+   Files: packages/core/src/routing-cache.ts (+ test/routing-cache.test.ts),
+   apps/api/src/routing-cache.ts, apps/api/src/directory/self.ts, apps/api/src/registry.ts.
+2. D-003 lease window: the ID issuer zeroed its local validity on the first failed renewal
+   (`validUntil = 0`), so ID-allocating writes failed with 503 ID_LEASE_UNAVAILABLE ~5 s after
+   the outage started — the registration deadline (~20 s) never got to bind, contradicting
+   D-003 ("ID generation stops by approximately 45 s after the last successful
+   lease-renewal ... D-002 registration validity stops all shard writes earlier, at
+   approximately 20 s").
+   Fix: a failed renewal no longer cuts the window; `next()` fails closed at
+   last-success + TTL - margin (~45 s). Files: packages/core/src/leases.ts
+   (+ test/id-issuer.test.ts with fake timers).
+3. Worker crash during the same stop: stopping pg-catalog killed an idle pool client and the
+   worker had no `'error'` listener on its pools -> unhandled 'error' event, process exit
+   (`57P01 terminating connection due to administrator command`, worker-fixJ.log). The API
+   pools were already guarded; the worker's were not.
+   Fix: `guardPool` in apps/worker/src/pools.ts logs and continues; next query acquires a
+   fresh client.
+
+Observed in round 1 (pre-fix), for the record:
+  employee catdown1792395103@hrms.local on shard-2; stop issued 07:31:53.562Z
+  check-in right after stop: HTTP 201 after 0.175850s (snapshot routing already working)
+  t+3.339s: duplicate 201;  t+4.846s: 503 ID_LEASE_UNAVAILABLE (mismatch 2 above)
+
+-- round 2 (fixed build; scenario-J-run2.txt) —
+employee catdown1792395392@hrms.local on shard-1; projection ready after 1 s; the new
+snapshot held the fresh employee because the heartbeat refreshes identity every 5 s.
+registry row before stop: api:api:4000:22336:bdf51866 | heartbeat_age_s=4.73
+stop issued 07:36:42.213Z (postgres log: shutdown 07:36:41.680Z)
+
+(1) writes survive the outage to the local deadline:
+  check-in immediately after stop:
+    {"success":true,...,"duplicate":false}} HTTP 201 after 0.051863s
+  poll every ~1.6 s: 12 consecutive duplicate 201s from t+2.943s to t+19.233s
+  first 503 at t+20.859s:
+    {"success":false,"error":{"code":"GATE_CLOSED","message":"Writes are paused for
+     maintenance. Try again shortly."}} HTTP 503 after 0.005421s
+  => 20.86 s after stop matches last-heartbeat + 20 s within poll granularity: the last
+  successful heartbeat send was ~0.8 s before the stop (heartbeat_age_s=4.73 at the query,
+  next 5 s tick due ~0.27 s later and accepted before shutdown at 07:36:41.68).
+  check-out (no ID allocation) at the same moment: 503 GATE_CLOSED 0.005559s — the deadline
+  (not the ID path) is the binding stop.
+
+(2) login fails closed during the outage:
+  503 DEPENDENCY_UNAVAILABLE (body head-truncated in raw) after 2.031332s (connect timeout).
+
+(3) employee search fails closed during the outage:
+  HR GET /api/v1/employees?q=Aarav: 503 DEPENDENCY_UNAVAILABLE after 2.017001s.
+
+(4) eligible shard-local reads keep working from the snapshot:
+  GET /api/v1/attendance/me: 200 after 0.028310s (today + history + summary, no catalog).
+  GET /health: 200, {"catalog":"down","shard-1..4":"up:OPEN"} after 2.117696s.
+
+recovery (round 2): start pg-catalog 07:37:11.322Z; first successful write at t+12.785s
+  (check-out 201, check_out=07:37:22.455Z). Postgres was ready 07:37:11.242Z, so the extra
+  ~12.5 s is the API-side connect path across the Windows docker port proxy after a container
+  start (same proxy class as the F-finding, start side) plus heartbeat tick phase — not a
+  mechanism failure. Pinned precisely in round 4.
+
+-- rounds 3-4 (recovery precision; scenario-J-recovery.txt) --
+Round 3 fixed my probe: `docker exec` cannot read a stopped container, so the baseline must be
+captured before the stop. (Its writes-resume number — 4.938 s after start, within one
+heartbeat — was still valid because a successful write requires a heartbeat success within
+the preceding 20 s.)
+
+Round 4 (clean):
+  baseline heartbeat_at before stop: 2026-10-19 07:41:36.424; stop returned 07:41:38.631Z
+  after 27 s of outage: check-out 503 GATE_CLOSED 0.024398s (deadline long past)
+  start returned 07:42:07.424Z; postgres ready 07:42:07.470Z
+  first fresh heartbeat_at = 2026-10-19 07:42:11.502, observed at t+5.051s after start
+  => first successful heartbeat 4.03 s after postgres was ready: within one 5 s heartbeat
+  interval.
+  first successful write at t+5.051s (same probe cycle): writes resume immediately once the
+  heartbeat lands.
+
+Interpretation: after the fixes, all four briefed J behaviors hold on the live stack — logins
+and catalog-backed searches fail closed in ~2 s (dependency connect timeout), shard-local
+writes continue for the whole local deadline and stop with REGISTRATION_EXPIRED -> 503
+GATE_CLOSED at last-heartbeat + 20 s, snapshot-routed reads stay available, and post-recovery
+writes resume within one heartbeat of the catalog accepting queries. The ID lease no longer
+preempts the registration deadline (D-003 vs D-002 ordering restored), the routing snapshot
+removes per-request catalog reads from the write path, and the worker survives catalog stops.

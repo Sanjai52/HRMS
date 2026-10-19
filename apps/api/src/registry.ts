@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { GateClosedError, registrationValid } from "@hrms/core";
 import { catalogPool } from "./db/pools.js";
+import { refreshRoutingCaches } from "./routing-cache.js";
 
 const HEARTBEAT_MS = 5000;
 const TTL_MS = Number(process.env.REGISTRY_TTL_MS ?? 30000);
@@ -53,6 +54,7 @@ export async function registerProcess(processKind: string, owner: string): Promi
     [processId, kind, owner, (map.rows[0] as { version: number } | undefined)?.version ?? 1, (gate.rows[0] as { epoch: number } | undefined)?.epoch ?? 0, (gate.rows[0] as { state: string } | undefined)?.state ?? "OPEN", TTL_MS / 1000]
   );
   lastSentMono = nowMono();
+  await refreshRoutingCaches();
   if (timer) clearInterval(timer);
   timer = setInterval(heartbeat, HEARTBEAT_MS);
   timer.unref?.();
@@ -70,6 +72,9 @@ async function heartbeat(): Promise<void> {
     // Only a send that reached the registry extends the local deadline; a failed
     // heartbeat must let it expire so writes stop ~20 s later.
     lastSentMono = nowMono();
+    // A healthy heartbeat is also the refresh tick for the routing/identity
+    // snapshot (kept as-is when the catalog is unreachable).
+    await refreshRoutingCaches();
   } catch {
     // registry unreachable: the local monotonic deadline stops writes (D-002)
   }
