@@ -1,0 +1,12 @@
+{
+ "idsPerSecSingleWorker": 2947892,
+ "singleWorkerIds": 200000,
+ "singleWorkerMs": 68,
+ "workers": 4,
+ "perWorker": 50000,
+ "totalIds": 200000,
+ "uniqueIds": 200000,
+ "duplicates": 0,
+ "idsPerSecCombined": 454287,
+ "combinedMs": 440
+}

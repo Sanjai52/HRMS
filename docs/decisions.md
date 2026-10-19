@@ -62,8 +62,9 @@
 
 - **Chosen values:** `K = 20` newest suggestions per prefix (`packages/core/src/autocomplete.ts:4`), prefixes capped at `12` characters (`autocomplete.ts:3`), per-prefix sorted-set TTL `7 days` (`packages/core/src/dispatcher.ts:45`), ranking = recency: indexing writes `score = Date.now()` (`dispatcher.ts:40,43`) and reads take the newest first via `zrevrange` (`apps/api/src/routes/search.ts:23`); each prefix set is trimmed to the newest `K` members (`zremrangebyrank`, `dispatcher.ts:44`). The API clamps a caller-supplied `limit` to `K` (`search.ts:17`).
 - **Context:** the deferred PRD §40C values. The cache stores gathered member strings per prefix under `autocomplete:org:all:<prefix>` (`autocomplete.ts:1-2,17-18`).
+- **Jobs scope (PRD §9.8):** the public-jobs autocomplete uses the same K / prefix cap / TTL / recency rules under a separate key space `autocomplete:jobs:public:<prefix>` with members `jobId|title|slug` (`packages/core/src/autocomplete.ts`); jobs are catalog-owned so the index is written synchronously on create/close (`apps/api/src/routes/jobs.ts`, best-effort — a KV outage degrades to the indexed catalog fallback) and read by the public `GET /api/v1/jobs/suggest` endpoint. Candidate/private data never enters this key space.
 - **Consequences:** a suggestion disappears after 7 idle days unless re-indexed; renames/reindexes surface immediately by bumping the score. No weighting knobs beyond recency.
-- **Tests:** suggest coverage in the API suite; `bench-suggest-r{1,2,3}.txt` in evaluation.md.
+- **Tests:** org suggest coverage in the API suite; `jobs-suggest.test.ts` (index hit, catalog fallback for queries beyond the 12-char cap, candidate exclusion, removal on close); `bench-suggest-r{1,2,3}.txt` in evaluation.md.
 
 ## D-010 — Candidate status-link token TTL
 
@@ -130,7 +131,7 @@
 | short | 60 / 60 s | fail closed |
 | recover | 10 / 60 s | fail closed |
 
-- **Source:** `apps/api/src/middleware/rate-limit.ts:67-75`. Identity is the user id when authenticated, else the client IP (`:44-45`); `RATE_LIMIT_BYPASS_IPS` is honored only outside production (`:14-21`).
+- **Source:** `apps/api/src/middleware/rate-limit.ts:67-75`. Identity is the user id when authenticated, else the client IP (`:44-45`); `RATE_LIMIT_BYPASS_IPS` is honored only outside production (`:14-21`). The `suggest` scope serves both autocompletes — org directory (`apps/api/src/routes/search.ts`) and public jobs (`apps/api/src/routes/jobs.ts`).
 - **Tests:** identity burst 429s; scenario F (closed scopes 503 in ≤2.1 s, open scopes keep 200); `ratelimit-r{1,2,3}.txt`.
 
 ## D-020 — Worker direct-pool exception and idle-client guard
