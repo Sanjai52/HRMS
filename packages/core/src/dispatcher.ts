@@ -107,7 +107,28 @@ async function applyEvent(
         nclient.release();
       }
       if (handles.enqueue) {
-        await handles.enqueue("notification", { notificationId: event.event_id, employeeId: event.employee_id, shard }, { jobId: event.event_id });
+        // BullMQ rejects custom ids that parse back to themselves as integers
+        // ("Custom Id cannot be integers"); outbox event ids are snowflakes.
+        // The prefix keeps a stable per-event id for BullMQ dedupe.
+        await handles.enqueue("notification", { notificationId: event.event_id, employeeId: event.employee_id, shard }, { jobId: `notify-${event.event_id}` });
+      }
+      break;
+    }
+    case "REVIEW_RELEASED": {
+      const map = handles.map;
+      if (!map) throw new Error("no-routing-map-for-notification");
+      const bucket = stableEmployeeBucket(event.employee_id);
+      const shard = map.get(bucket);
+      const pool = shard ? handles.shards[shard] : undefined;
+      if (!pool) throw new Error(`no-shard-for-notification:${bucket}`);
+      const nclient = await pool.connect();
+      try {
+        await nclient.query(
+          "INSERT INTO notifications (notification_id, employee_id, bucket_id, kind, title, body) VALUES ($1, $2, $3, 'performance', 'Review released', $4) ON CONFLICT DO NOTHING",
+          [event.event_id, event.employee_id, bucket, "Your performance review is ready to view."]
+        );
+      } finally {
+        nclient.release();
       }
       break;
     }

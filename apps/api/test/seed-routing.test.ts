@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { Pool } from "pg";
-import { stableEmployeeBucket } from "@hrms/core";
+import { loadActiveMap, stableEmployeeBucket } from "@hrms/core";
 
 const catalogUrl = process.env.CATALOG_DATABASE_URL;
 const shardUrls: Record<string, string | undefined> = {
@@ -26,6 +26,32 @@ describeIf("seeded-row bucket/routing", () => {
       }
       await pool.end();
     }
+    await catalog.end();
+  });
+
+  it("seeds an active candidate map whose version outranks the employee map, confined to shards 1-3", async () => {
+    const catalog = new Pool({ connectionString: catalogUrl });
+    const cand = await catalog.query("SELECT version FROM routing_map_versions WHERE domain = 'candidate' AND active = TRUE ORDER BY version DESC LIMIT 1");
+    expect(cand.rows.length).toBe(1);
+    const emp = await catalog.query("SELECT version FROM routing_map_versions WHERE domain = 'employee' AND active = TRUE ORDER BY version DESC LIMIT 1");
+    expect(cand.rows[0].version as number).toBeGreaterThan(emp.rows[0].version as number);
+    const rows = await catalog.query("SELECT bucket_id, shard_id FROM routing_map_buckets WHERE version = $1", [cand.rows[0].version]);
+    expect(rows.rows.length).toBe(256);
+    for (const row of rows.rows) {
+      expect(["shard-1", "shard-2", "shard-3"]).toContain(row.shard_id as string);
+      expect(row.shard_id).not.toBe("shard-4");
+    }
+    await catalog.end();
+  });
+
+  it("loadActiveMap returns the employee version, never the outranking candidate map", async () => {
+    const catalog = new Pool({ connectionString: catalogUrl });
+    const { version, map } = await loadActiveMap(catalog);
+    const emp = await catalog.query("SELECT version FROM routing_map_versions WHERE domain = 'employee' AND active = TRUE ORDER BY version DESC LIMIT 1");
+    expect(version).toBe(emp.rows[0].version as number);
+    expect(map.size).toBe(256);
+    const rows = await catalog.query("SELECT bucket_id, shard_id FROM routing_map_buckets WHERE version = $1", [version]);
+    for (const row of rows.rows) expect(map.get(row.bucket_id as number)).toBe(row.shard_id);
     await catalog.end();
   });
 });

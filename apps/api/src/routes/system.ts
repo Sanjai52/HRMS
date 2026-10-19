@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { errorEnvelope, runDispatcherOnce, loadActiveMap, BullMqJobQueue } from "@hrms/core";
 import { redisKv } from "../db/redis.js";
-import { catalogPool, shardPools } from "../db/pools.js";
+import { catalogPool } from "../db/pools.js";
+import { allShardPools } from "../db/shards.js";
 
 export const systemRouter = Router();
 systemRouter.post("/system/test/reset-limiter", async (_req, res) => {
@@ -29,7 +30,7 @@ systemRouter.post("/system/test/run-dispatcher", async (_req, res) => {
   try {
     const counts = await runDispatcherOnce({
       catalog: catalogPool,
-      shards: shardPools,
+      shards: Object.fromEntries(allShardPools().map(({ shard, pool }) => [shard, pool])),
       redis: redisKv(),
       map,
       enqueue: (name, data, opts) => queue.enqueue(name as "notification", data, opts),

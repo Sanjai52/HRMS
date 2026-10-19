@@ -10,7 +10,7 @@ export function Button({
   return (
     <button
       className={cn(
-        "inline-flex h-12 items-center justify-center rounded-full px-6 text-[15px] font-semibold transition active:scale-[0.98]",
+        "inline-flex h-12 items-center justify-center rounded-full px-6 text-[15px] font-semibold transition duration-200 outline-none focus-visible:ring-2 focus-visible:ring-hof focus-visible:ring-offset-2 active:scale-[0.98] disabled:opacity-60",
         variant === "primary" && "bg-rausch text-white hover:bg-rausch-dark",
         variant === "quiet" && "bg-pearl text-hof hover:bg-line-soft",
         variant === "outline" && "border border-line bg-white text-hof hover:border-hof",
@@ -54,7 +54,7 @@ export function TextInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
     <input
       {...props}
       className={cn(
-        "h-12 rounded-input border border-line bg-white px-4 text-[15px] text-hof outline-none placeholder:text-foggy/70 focus:border-hof",
+        "h-12 rounded-input border border-line bg-white px-4 text-[15px] text-hof outline-none transition duration-200 placeholder:text-foggy/70 focus:border-hof focus-visible:ring-2 focus-visible:ring-hof/40",
         props.className
       )}
     />

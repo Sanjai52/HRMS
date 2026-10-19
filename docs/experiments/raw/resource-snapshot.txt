@@ -1,0 +1,15 @@
+# docker stats — final verification stack (2026-10-19, UTC)
+# host processes: api :4000/:4002/:4003 (tsx), worker :4001 (tsx), web :3000 (next start, production build)
+2026-10-19T08:21:50Z
+NAME                      CPU %     MEM USAGE / LIMIT
+hrms-candidate-portal-1   0.00%     23.09MiB / 7.595GiB
+hrms-s3-1                 0.02%     63.09MiB / 7.595GiB
+hrms-nginx-1              0.00%     2.355MiB / 7.595GiB
+hrms-redis-kv-1           0.92%     6.355MiB / 7.595GiB
+hrms-redis-queue-1        0.99%     7.93MiB / 7.595GiB
+hrms-mailpit-1            0.00%     38.48MiB / 7.595GiB
+hrms-shard-2-1            0.00%     28.52MiB / 7.595GiB
+hrms-shard-4-1            0.04%     30.66MiB / 7.595GiB
+hrms-shard-1-1            0.00%     28.37MiB / 7.595GiB
+hrms-shard-3-1            0.03%     40.5MiB / 7.595GiB
+hrms-pg-catalog-1         0.00%     35.71MiB / 7.595GiB

@@ -1,0 +1,80 @@
+Scenario K — migration gates, stale writer, and the Task 8 test reference
+Date: 2026-10-19  |  Commit: 482e75c + the snapshot miss-refresh fix shipped with this file
+Setup: full stack up (pg-catalog, shard-1..4, redis-kv, redis-queue, worker :4001, APIs
+:4000/:4002/:4003); active employee map v1 (shard-1,shard-2,shard-3); gate tests open direct
+pools so api-env.sh is sourced for the run.
+Method: focused vitest run of the Task 8 / Phase 9-10b files, serially
+(`npx vitest run --no-file-parallelism test/migration.test.ts test/migration-gate.test.ts
+test/fence-coverage.test.ts`); migration.test.ts performs a real shard-4 migration through the
+admin API (preview -> copy -> checksum verify -> cutover -> smoke -> gates) and its afterAll
+restores the pre-test map. Raws: scenario-K-testrun.log (run 1), scenario-K-testrun2.log
+(run 2), scenario-K-missrefresh-repro.txt; live metrics in `migration_runs.metrics`.
+
+-- run 1 (13:15:52 IST; one red) --
+migration.test.ts 2/2 PASS (full shard-4 migration COMPLETED, 65.9 s)
+migration-gate.test.ts 3/3 PASS (drain, stale writer, rollback)
+fence-coverage.test.ts 0/1 FAIL:
+  AssertionError: expected 404 to be 201 at test/fence-coverage.test.ts:162
+  (setup: onboard a fresh employee, then IMMEDIATELY POST /leave/requests)
+
+Diagnosis (a regression introduced by the J routing snapshot, 482e75c): the identity snapshot
+is refreshed on the 5 s registry heartbeat, so for up to 5 s after a directory row lands
+(onboarding -> first self-service action) `selfEmployeeId` returned null and the route answered
+404 "No employee record for this account yet" (apps/api/src/routes/leave.ts:70). The fence test
+runs that flow in ~2 s, inside the stale window; the full suite had not run since the snapshot
+landed, so K was the first run to expose it. Before the snapshot, the lookup was a per-request
+catalog read and could not go stale.
+
+Fix (in `RoutingCache.employeeIdOf`, packages/core/src/routing-cache.ts): a miss re-reads the
+identity, with concurrent readers sharing one in-flight load (single-flight). Known users
+still resolve from the snapshot without touching the catalog; during a catalog outage a miss
+throws (routes surface a dependency error — fail closed); there is no time window in which a
+fresh directory row stays invisible.
+New core tests: miss re-read (fresh employee visible immediately) and single-flight
+(packages/core/test/routing-cache.test.ts, 6/6).
+
+Follow-up (same day): the first iteration of the fix throttled miss re-reads to one per
+second. The focused K set passed, but the full serial API suite failed 2/7 in
+attendance-leave.test.ts ("expected 404 to be 201/409" on a fresh person's first action):
+a miss that arrived inside another user's throttle window skipped the re-read and read the
+stale snapshot. The time throttle was replaced with single-flight dedupe (always correct on
+miss; concurrent misses share one query; unknown-user traffic is bounded by the endpoint rate
+limits). Re-verified after rebuild + API restart: attendance-leave.test.ts 7/7 (13:32 IST),
+then the full suite 23 files / 72 passed | 1 skipped in 188 s (api-suite-postK2.log).
+
+Fix verification (scenario-K-missrefresh-repro.txt): onboard -> run-dispatcher -> IMMEDIATE
+  POST /leave/requests: HTTP 201 after 0.057333 s (was 404)
+  POST /attendance/check-in: HTTP 201 after 0.081074 s
+  wall time from dispatcher drain to leave response: 0.216 s — far inside the old 5 s window.
+
+-- run 2 (13:20:52 IST; all green) --
+test/fence-coverage.test.ts 1/1 PASS (2.6 s)
+test/migration.test.ts 2/2 PASS (60.2 s)
+  + preview guards, full shard-4 migration preserves every record (59.6 s)
+  + guards: unknown shard 400, already-member 400, abort unknown 400, abort terminal refused
+test/migration-gate.test.ts 3/3 PASS (4.1 s)
+  + (a) drain: a slow fenced write finishes before the gate closes; later writes see GateClosedError
+  + (b) stale writer: a pool resolved via the old map still hits the fence after the map switched
+    and the shard gated
+  + (c) rollback: a smoke failure reverts the map, reopens gates same-epoch and records ABORTED + audit
+Test files 3 passed (3); tests 6 passed (6); duration 69.97 s.
+
+-- row B re-derivation (evaluation failure table) --
+The live migration performed by run 2 (migration_runs row `105573391162945536`,
+created 2026-10-19 07:50:57Z):
+  state COMPLETED | moved_buckets 64 | metrics {"movedBuckets":64,"estimatedRows":8801,
+  "copiedRows":8801,"durationMs":57218}
+Checksum verification is a runner step (COPYING -> VERIFYING -> CUTOVER_COMMITTED ->
+COMPLETED); the test additionally asserts directory row counts equal before/after and that
+shard gates return to OPEN. Post-state: active employee map back to v1 (shard-1..3) and
+catalog gate OPEN (the suite restores the pre-test map). The earlier "134 rows" figure in
+evaluation.md was the Phase 9 pilot's count on the freshly seeded dataset; it is replaced by
+this run's recorded metrics (dev data has accumulated since; the bucket count is stable at 64
+across all recorded runs, 2026-10-17..19).
+
+Interpretation: the Task 8 machinery (drain semantics, stale-writer fencing through the durable
+gates, smoke-failure rollback with same-epoch CAS and audit) and the full shard-add migration
+all pass on the live stack, with the migration's own metrics as the recorded source. Scenario K
+also caught one real regression from the J snapshot work (new-employee 404 within the 5 s
+refresh window) — fixed with a single-flight miss re-read and re-verified (focused set + full
+suite) before this pass was recorded.

@@ -1,0 +1,27 @@
+kill-time probe  2026-10-18T11:02:05Z
+-- :8080 request codes + replica after kill (8x) --
+#1 HTTP/1.1 404 Not Found x-api-instance: 4003
+#2 HTTP/1.1 404 Not Found x-api-instance: 4000
+#3 HTTP/1.1 404 Not Found x-api-instance: 4000
+#4 HTTP/1.1 404 Not Found x-api-instance: 4000
+#5 HTTP/1.1 404 Not Found x-api-instance: 4003
+#6 HTTP/1.1 404 Not Found x-api-instance: 4003
+#7 HTTP/1.1 404 Not Found x-api-instance: 4003
+#8 HTTP/1.1 404 Not Found x-api-instance: 4000
+-- direct :4002 after kill --
+direct 4002 -> HTTP 000
+-- :8080 after 30s settle (3x) --
+#1 -> 404
+#2 -> 404
+#3 -> 404
+
+-- recovery probe (corrected path /health) 2026-10-18T11:03:17Z --
+note: the block above probed /api/v1/health (a 404 route); its codes are route-404s and the x-api-instance values are the rotation signal.
+#1 HTTP/1.1 200 OK x-api-instance: 4003
+#2 HTTP/1.1 200 OK x-api-instance: 4002
+#3 HTTP/1.1 200 OK x-api-instance: 4003
+#4 HTTP/1.1 200 OK x-api-instance: 4003
+#5 HTTP/1.1 200 OK x-api-instance: 4003
+#6 HTTP/1.1 200 OK x-api-instance: 4000
+#7 HTTP/1.1 200 OK x-api-instance: 4003
+#8 HTTP/1.1 200 OK x-api-instance: 4003

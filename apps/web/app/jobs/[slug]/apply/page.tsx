@@ -32,7 +32,10 @@ export default function ApplyPage({ params }: { params: Promise<{ slug: string }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!jobId) return;
+    if (!jobId) {
+      setError("Role details are still loading. Wait a moment and try again.");
+      return;
+    }
     setError("");
     setBusy(true);
     try {

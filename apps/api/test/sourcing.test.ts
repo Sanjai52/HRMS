@@ -1,13 +1,26 @@
 import { describe, it, expect, beforeAll } from "vitest";
+import { Pool } from "pg";
 
 const base = process.env.API_BASE ?? "http://localhost:4000";
+
+async function auditCount(action: string, resource: string): Promise<number> {
+  const catalogUrl = process.env.CATALOG_DATABASE_URL;
+  if (!catalogUrl) return -1;
+  const pool = new Pool({ connectionString: catalogUrl });
+  try {
+    const r = await pool.query("SELECT count(*)::int AS c FROM audit_logs WHERE action = $1 AND resource = $2", [action, resource]);
+    return (r.rows[0] as { c: number }).c;
+  } finally {
+    await pool.end();
+  }
+}
 
 async function hrLogin(): Promise<string> {
   const res = await fetch(`${base}/api/v1/auth/login`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ email: "hr@hrms.local", password: "ChangeMe123!" }),
-  }, 90000);
+  });
   expect(res.status).toBe(200);
   return ((await res.json()) as { data: { token: string } }).data.token;
 }
@@ -17,7 +30,7 @@ async function startRun(hr: string, skills: string[]): Promise<string> {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${hr}` },
     body: JSON.stringify({ role: "backend", skills }),
-  }, 90000);
+  });
   expect(r.status).toBe(202);
   return ((await r.json()) as { data: { runId: string } }).data.runId;
 }
@@ -35,7 +48,7 @@ async function waitRun(hr: string, runId: string): Promise<{ status: string; pag
 describe("Phase 7 sourcing crawler", () => {
   beforeAll(async () => {
     await fetch(`${base}/system/test/reset-limiter`, { method: "POST" });
-  }, 90000);
+  });
 
   it("discovers, dedupes and imports portal candidates; reruns add nothing", async () => {
     const hr = await hrLogin();
@@ -43,10 +56,12 @@ describe("Phase 7 sourcing crawler", () => {
     const run = await waitRun(hr, runId);
     expect(run.pages).toBeGreaterThan(0);
     expect(run.discovered).toBeGreaterThan(0);
+    if (process.env.CATALOG_DATABASE_URL) expect(await auditCount("crawl.started", `crawl:${runId}`)).toBeGreaterThan(0);
 
     const pool = await fetch(`${base}/api/v1/recruitment/candidates?q=nila.fernando`, { headers: { authorization: `Bearer ${hr}` } });
     expect(pool.status).toBe(200);
-    const poolBody = (await pool.json()) as { data: Array<{ email: string; source: string }> };
+    const poolBody = (await pool.json()) as { data: Array<{ email: string; source: string }>; meta: { partial: boolean; unavailable: string[] } };
+    expect(poolBody.meta.partial).toBe(false);
     expect(poolBody.data.some((c) => c.email === "nila.fernando@example.com" && c.source === "portal")).toBe(true);
 
     const again = await startRun(hr, []);

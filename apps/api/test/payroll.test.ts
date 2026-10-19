@@ -1,7 +1,20 @@
 import { describe, it, expect, beforeAll } from "vitest";
+import { Pool } from "pg";
 
 const base = process.env.API_BASE ?? "http://localhost:4000";
 const tag = Date.now();
+
+async function auditCount(action: string, resource: string): Promise<number> {
+  const catalogUrl = process.env.CATALOG_DATABASE_URL;
+  if (!catalogUrl) return -1;
+  const pool = new Pool({ connectionString: catalogUrl });
+  try {
+    const r = await pool.query("SELECT count(*)::int AS c FROM audit_logs WHERE action = $1 AND resource = $2", [action, resource]);
+    return (r.rows[0] as { c: number }).c;
+  } finally {
+    await pool.end();
+  }
+}
 
 async function hrLogin(): Promise<string> {
   const res = await fetch(`${base}/api/v1/auth/login`, {
@@ -76,6 +89,8 @@ describe("Phase 5 payroll", () => {
     const hr = await hrLogin();
     const e = await makePerson(hr, "Pay Exact");
     expect(await setStructure(hr, e.employeeId, { basicPaise: 5000000, allowancesPaise: 2000000, otherDeductionsPaise: 0, pfPct: 12, taxPct: 10 })).toBe(200);
+    await fetch(`${base}/system/test/run-dispatcher`, { method: "POST" });
+    if (process.env.CATALOG_DATABASE_URL) expect(await auditCount("payroll.structure_updated", `employee:${e.employeeId}`)).toBeGreaterThan(0);
 
     const run = await fetch(`${base}/api/v1/payroll/batches`, {
       method: "POST",
@@ -95,7 +110,9 @@ describe("Phase 5 payroll", () => {
     expect(Number.isInteger(rec.net_paise)).toBe(true);
 
     const detail = await fetch(`${base}/api/v1/payroll/batches/${data.batchId}`, { headers: { authorization: `Bearer ${hr}` } });
-    const detailBody = (await detail.json()) as { data: { batch: { status: string }; records: Array<{ record_id: string }> } };
+    const detailBody = (await detail.json()) as { data: { batch: { status: string }; records: Array<{ record_id: string }> }; meta: { partial: boolean; unavailable: string[] } };
+    expect(detailBody.meta.partial).toBe(false);
+    expect(detailBody.meta.unavailable).toEqual([]);
     const before = detailBody.data.records.filter((r) => r.record_id === rec.record_id).length;
     expect(before).toBe(1);
 
@@ -110,7 +127,7 @@ describe("Phase 5 payroll", () => {
     const mine2 = await fetch(`${base}/api/v1/payroll/me?period=2026-09`, { headers: { authorization: `Bearer ${e.token}` } });
     const mine2Body = (await mine2.json()) as { data: unknown[] };
     expect(mine2Body.data.length).toBe(1);
-  });
+  }, 30000);
 
   it("payslips are restricted to the owner and HR", async () => {
     const hr = await hrLogin();
@@ -132,5 +149,5 @@ describe("Phase 5 payroll", () => {
     expect(denied.status).toBe(403);
     const allowed = await fetch(`${base}/api/v1/payroll/payslips/${mine.data[0].record_id}`, { headers: { authorization: `Bearer ${e.token}` } });
     expect(allowed.status).toBe(200);
-  });
+  }, 30000);
 });

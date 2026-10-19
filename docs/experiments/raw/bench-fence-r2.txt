@@ -1,0 +1,48 @@
+{
+ "operation": "single-row UPDATE on shard-1 (bench_probe)",
+ "iters": 200,
+ "runs": [
+  {
+   "run": 1,
+   "fencedMs": {
+    "p50": 7.18,
+    "p95": 17.7,
+    "count": 200
+   },
+   "bareMs": {
+    "p50": 7.47,
+    "p95": 19.12,
+    "count": 200
+   },
+   "overheadPct": -3.9
+  },
+  {
+   "run": 2,
+   "fencedMs": {
+    "p50": 6.94,
+    "p95": 20.01,
+    "count": 200
+   },
+   "bareMs": {
+    "p50": 5.14,
+    "p95": 9.53,
+    "count": 200
+   },
+   "overheadPct": 35
+  },
+  {
+   "run": 3,
+   "fencedMs": {
+    "p50": 6.26,
+    "p95": 9.42,
+    "count": 200
+   },
+   "bareMs": {
+    "p50": 5.04,
+    "p95": 7.88,
+    "count": 200
+   },
+   "overheadPct": 24.2
+  }
+ ]
+}

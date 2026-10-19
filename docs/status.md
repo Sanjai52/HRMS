@@ -78,7 +78,27 @@ Updated every time a phase (or sub-slice) lands. Measured results only; no inven
 - Web: `/hr/recruitment/sourcing` (role/skills form + live run list) and run detail with per-page status.
 - Tests: sourcing 2/2, core parser 4/4, serial suite 26/26.
 
-## Phases 8–11: NOT STARTED
+## Phase 8 — Performance, reports and web completion: DONE (2026-10-18)
+
+- Performance reviews/cycles + HR employee tabs/dashboard (fbefaa3); attendance reports + corrections (a03bfe9, 455185a); scatter-gather reports with partial-result meta (a4ef21d, dedupe f82fb91).
+- Tests: performance.test.ts, attendance-reports.test.ts, employees suite (71 passed | 1 skipped, 22 files on 2026-10-18); web build + Playwright e2e suite (re-verified in the final pass).
+- Evidence pointers: [evaluation.md](evaluation.md) traceability rows; scenario-C/D mixer raws.
+
+## Phase 9 — Shard-add migration control plane: DONE (2026-10-19)
+
+- Migration runner (preview -> copy -> checksum verify -> same-epoch cutover CAS -> smoke -> gates), rollback on smoke failure (d998d67), admin shards endpoints + UI, catalog/shard write gates.
+- Tests: migration.test.ts 2/2 (full shard-4 migration COMPLETED, 64 buckets) and migration-gate.test.ts 3/3 (drain, stale writer, rollback) — scenario K.
+- Evidence pointers: [scenario-K.txt](experiments/raw/scenario-K.txt); live run metrics in `migration_runs.metrics`.
+
+## Phase 10 — Scale hardening, load evidence, evaluation close-out: DONE (2026-10-19)
+
+- 10a load/bench harness: k6 profiles (low/medium/high + 9 AM burst), ring/suggest/fence/ratelimit benches — [evaluation.md](evaluation.md) workload + component tables from committed raws (mixed-*-r*.txt, burst-r*.txt, bench-*.txt).
+- 10b hardening: catalog write gate + route enforcement (e7932ab); shard write fences (17cbf99); pool timeouts + pg->503 (8f251dc); registration deadline + fencedWrite (fccb464) and the in-process routing/identity snapshot (482e75c + miss-refresh); KvStore (2eee370); queue producer fail-fast (8e872dd); NGINX replicas + trust proxy + `x-api-instance` (b73d305); worker/admin observability (463e970).
+- Failure scenarios C (replica scaling), D (API kill + NGINX), E (worker kill/retry), F (Redis KV/queue), I (shard outage), J (catalog outage + deadline), K (migration/stale writer) recorded with raws under `experiments/raw/` and tabulated in [evaluation.md](evaluation.md); T18/T19 runtime evidence in `experiments/t18-19-runtime-evidence.txt`.
+- §34 close-out (Task 22): public-jobs autocomplete (`GET /api/v1/jobs/suggest`, catalog fallback, `NFR-SEARCH-01`); migration ownership CI check (`scripts/check-shard-owned-tables.mjs`, `NFR-MIG-03`); ID bench (`bench-id-r{1,2,3}.txt`) + `resource-snapshot.txt` raws.
+- Final verification (Task 22): `npm run ci` exit 0 (typecheck · lint · pool-access · shard-owned-tables · API 24 files / 73 pass · core 13 files / 40 pass), web production build clean, Playwright e2e 14/14; PRD §34 acceptance walk (88 items) appended to [evaluation.md](evaluation.md).
+
+## Phase 11 — Cloud deployment (AWS): NOT STARTED (optional, deferred per PRD §40; out of scope for the local demo)
 
 ## Migration rule
 

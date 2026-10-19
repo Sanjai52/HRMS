@@ -1,7 +1,20 @@
 import { describe, it, expect, beforeAll } from "vitest";
+import { Pool } from "pg";
 
 const base = process.env.API_BASE ?? "http://localhost:4000";
+const catalogUrl = process.env.CATALOG_DATABASE_URL;
 const tag = Date.now();
+
+async function auditCount(action: string, resource: string): Promise<number> {
+  if (!catalogUrl) return -1;
+  const pool = new Pool({ connectionString: catalogUrl });
+  try {
+    const r = await pool.query("SELECT count(*)::int AS c FROM audit_logs WHERE action = $1 AND resource = $2", [action, resource]);
+    return (r.rows[0] as { c: number }).c;
+  } finally {
+    await pool.end();
+  }
+}
 
 async function hrLogin(): Promise<string> {
   const res = await fetch(`${base}/api/v1/auth/login`, {
@@ -34,6 +47,7 @@ describe("Phase 6 recruitment and short links", () => {
 
     const detail = await fetch(`${base}/api/v1/jobs/${j.slug}`);
     expect(detail.status).toBe(200);
+    if (catalogUrl) expect(await auditCount("job.created", `job:${j.jobId}`)).toBeGreaterThan(0);
 
     const short = await fetch(`${base}/api/v1/short-urls`, {
       method: "POST",
@@ -42,6 +56,7 @@ describe("Phase 6 recruitment and short links", () => {
     });
     expect(short.status).toBe(201);
     const { data: s } = (await short.json()) as { data: { code: string } };
+    if (catalogUrl) expect(await auditCount("shortlink.created", `short:${s.code}`)).toBeGreaterThan(0);
 
     const bad = await fetch(`${base}/api/v1/short-urls`, {
       method: "POST",
@@ -77,6 +92,13 @@ describe("Phase 6 recruitment and short links", () => {
     expect(status.status).toBe(200);
     const statusBody = (await status.json()) as { data: { stage: string } };
     expect(statusBody.data.stage).toBe("APPLIED");
+
+    const close = await fetch(`${base}/api/v1/jobs/${j.jobId}/close`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${hr}` },
+    });
+    expect(close.status).toBe(200);
+    if (catalogUrl) expect(await auditCount("job.closed", `job:${j.jobId}`)).toBeGreaterThan(0);
   });
 
   it("stage machine enforces transitions and versions; convert is idempotent", async () => {
@@ -126,6 +148,22 @@ describe("Phase 6 recruitment and short links", () => {
       body: JSON.stringify({ round: "Technical 1", interviewer: "Lead Engineer" }),
     });
     expect(iv.status).toBe(201);
+    const { data: ivData } = (await iv.json()) as { data: { interviewId: string } };
+
+    const ivUpd = await fetch(`${base}/api/v1/recruitment/applications/${a.applicationId}/interviews/${ivData.interviewId}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${hr}` },
+      body: JSON.stringify({ status: "COMPLETED", feedback: "Strong systems depth" }),
+    });
+    expect(ivUpd.status).toBe(200);
+
+    const asmt = await fetch(`${base}/api/v1/recruitment/applications/${a.applicationId}/assessments`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${hr}` },
+      body: JSON.stringify({ type: "Coding", score: "8/10" }),
+    });
+    expect(asmt.status).toBe(201);
+    const { data: asmtData } = (await asmt.json()) as { data: { assessmentId: string } };
 
     const c1 = await fetch(`${base}/api/v1/recruitment/applications/${a.applicationId}/convert`, {
       method: "POST",
@@ -160,5 +198,10 @@ describe("Phase 6 recruitment and short links", () => {
     expect(audit.status).toBe(200);
     const auditBody = (await audit.json()) as { data: unknown[] };
     expect(auditBody.data.length).toBeGreaterThan(0);
+    if (catalogUrl) {
+      expect(await auditCount("interview.created", `interview:${ivData.interviewId}`)).toBeGreaterThan(0);
+      expect(await auditCount("interview.updated", `interview:${ivData.interviewId}`)).toBeGreaterThan(0);
+      expect(await auditCount("assessment.completed", `assessment:${asmtData.assessmentId}`)).toBeGreaterThan(0);
+    }
   });
 });

@@ -11,4 +11,15 @@ if [ -n "$violations" ]; then
   echo "$violations"
   exit 1
 fi
+# Rule 2: route code must reach shards through db/shards.ts helpers
+# (poolFor / ownedShardPools / allShardPools), never the raw shardPools map.
+# Exception: pool factory, the shards helper itself, migration engine,
+# read-only health diagnostics, and the worker pool wiring.
+shard_allow='^(apps/api/src/db/pools\.ts:|apps/api/src/db/shards\.ts:|apps/api/src/migration/|apps/api/src/routes/health\.ts:|apps/worker/src/pools\.ts:|apps/worker/src/index\.ts:)'
+shard_violations=$(git grep -n --no-color 'shardPools' -- 'apps/api/src' 'packages/core/src' 'apps/worker/src' 2>/dev/null | grep -v -E "$shard_allow" || true)
+if [ -n "$shard_violations" ]; then
+  echo "Direct shardPools access outside db/shards.ts (use ownedShardPools()/poolFor()):"
+  echo "$shard_violations"
+  exit 1
+fi
 echo "pool-access-ok"

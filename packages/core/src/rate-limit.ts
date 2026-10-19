@@ -1,5 +1,3 @@
-import { Redis } from "ioredis";
-
 export interface BucketResult {
   allowed: boolean;
   remaining: number;
@@ -35,8 +33,13 @@ redis.call('PEXPIRE', key, ARGV[4])
 return {allowed, math.floor(tokens), retry_after}
 `;
 
+/** Minimal client surface the bucket needs (a real ioredis client satisfies it). */
+export interface TokenBucketClient {
+  eval(script: string, numKeys: number, ...args: Array<string | number>): Promise<unknown>;
+}
+
 export class TokenBucket {
-  constructor(private redis: Redis, private prefix = "rl") {}
+  constructor(private redis: TokenBucketClient, private prefix = "rl") {}
 
   async take(key: string, capacity: number, windowMs: number): Promise<BucketResult> {
     const refillPerMs = capacity / windowMs;

@@ -3,7 +3,7 @@ import { normalizePrefix, suggestKey, parseSuggestMember, AUTOCOMPLETE_TOP_K } f
 import { catalogPool } from "../db/pools.js";
 import { redisKv } from "../db/redis.js";
 import { requireAuth, requireRoles } from "../middleware/auth.js";
-import { searchLimit } from "../middleware/rate-limit.js";
+import { suggestLimit } from "../middleware/rate-limit.js";
 
 export const searchRouter = Router();
 
@@ -11,7 +11,7 @@ searchRouter.get(
   "/suggest",
   requireAuth,
   requireRoles("HR", "ADMIN", "MANAGER"),
-  searchLimit,
+  suggestLimit,
   async (req, res) => {
     const q = normalizePrefix(typeof req.query.q === "string" ? req.query.q : "");
     const limit = Math.min(Number(req.query.limit ?? 8), AUTOCOMPLETE_TOP_K);

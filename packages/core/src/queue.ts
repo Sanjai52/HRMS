@@ -1,4 +1,4 @@
-export type JobName = "test-job" | "payroll-chunk" | "notification" | "crawler-run";
+export type JobName = "test-job" | "payroll-chunk" | "notification" | "crawler-run" | "announcement-fanout";
 
 export interface JobEnvelope<T = unknown> {
   jobId: string;

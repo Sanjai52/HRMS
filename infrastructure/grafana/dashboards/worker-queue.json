@@ -1,0 +1,76 @@
+{
+  "title": "HRMS Worker Queue",
+  "uid": "worker-queue",
+  "tags": ["hrms", "worker", "queue"],
+  "timezone": "browser",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Jobs processed total",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "worker_jobs_processed_total",
+          "format": "time_series",
+          "interval": ""
+        }
+      ],
+      "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4}
+    },
+    {
+      "type": "stat",
+      "title": "Jobs failed total",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "worker_jobs_failed_total",
+          "format": "time_series",
+          "interval": ""
+        }
+      ],
+      "gridPos": {"x": 6, "y": 0, "w": 6, "h": 4}
+    },
+    {
+      "type": "stat",
+      "title": "Queue waiting",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "queue_waiting{name=\"hrms\"}",
+          "format": "time_series",
+          "interval": ""
+        }
+      ],
+      "gridPos": {"x": 0, "y": 4, "w": 6, "h": 4}
+    },
+    {
+      "type": "stat",
+      "title": "Queue active",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "queue_active{name=\"hrms\"}",
+          "format": "time_series",
+          "interval": ""
+        }
+      ],
+      "gridPos": {"x": 6, "y": 4, "w": 6, "h": 4}
+    },
+    {
+      "type": "graph",
+      "title": "Job duration (seconds)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum(rate(worker_job_duration_seconds_bucket[5m])) by (le))",
+          "format": "time_series",
+          "interval": ""
+        }
+      ],
+      "gridPos": {"x": 0, "y": 8, "w": 12, "h": 4}
+    }
+  ],
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "15s"
+}

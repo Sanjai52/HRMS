@@ -11,3 +11,35 @@ scrape_configs:
     static_configs:
       - targets: ["host.docker.internal:4001"]
     metrics_path: "/metrics"
+
+  - job_name: "postgres-exporter-catalog"
+    static_configs:
+      - targets: ["host.docker.internal:9101"]
+
+  - job_name: "postgres-exporter-shard-1"
+    static_configs:
+      - targets: ["host.docker.internal:9102"]
+
+  - job_name: "postgres-exporter-shard-2"
+    static_configs:
+      - targets: ["host.docker.internal:9103"]
+
+  - job_name: "postgres-exporter-shard-3"
+    static_configs:
+      - targets: ["host.docker.internal:9104"]
+
+  - job_name: "postgres-exporter-shard-4"
+    static_configs:
+      - targets: ["host.docker.internal:9105"]
+
+  - job_name: "redis-exporter-queue"
+    static_configs:
+      - targets: ["host.docker.internal:9121"]
+
+  - job_name: "redis-exporter-kv"
+    static_configs:
+      - targets: ["host.docker.internal:9122"]
+
+  - job_name: "cadvisor"
+    static_configs:
+      - targets: ["host.docker.internal:8081"]

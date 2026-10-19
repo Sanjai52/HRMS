@@ -104,6 +104,73 @@ services:
     depends_on:
       - redis-queue
 
+  # ---- Observability stack (`docker compose --profile observability up -d`) ----
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    profiles: ["observability"]
+    privileged: true
+    ports:
+      - "8081:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+
+  postgres-exporter-catalog:
+    image: prometheuscommunity/postgres-exporter:latest
+    profiles: ["observability"]
+    environment:
+      DATA_SOURCE_NAME: "postgresql://hrms:hrms@pg-catalog:5432/hrms_catalog?sslmode=disable"
+    ports:
+      - "9101:9187"
+
+  postgres-exporter-shard-1:
+    image: prometheuscommunity/postgres-exporter:latest
+    profiles: ["observability"]
+    environment:
+      DATA_SOURCE_NAME: "postgresql://hrms:hrms@shard-1:5432/hrms_shard1?sslmode=disable"
+    ports:
+      - "9102:9187"
+
+  postgres-exporter-shard-2:
+    image: prometheuscommunity/postgres-exporter:latest
+    profiles: ["observability"]
+    environment:
+      DATA_SOURCE_NAME: "postgresql://hrms:hrms@shard-2:5432/hrms_shard2?sslmode=disable"
+    ports:
+      - "9103:9187"
+
+  postgres-exporter-shard-3:
+    image: prometheuscommunity/postgres-exporter:latest
+    profiles: ["observability"]
+    environment:
+      DATA_SOURCE_NAME: "postgresql://hrms:hrms@shard-3:5432/hrms_shard3?sslmode=disable"
+    ports:
+      - "9104:9187"
+
+  postgres-exporter-shard-4:
+    image: prometheuscommunity/postgres-exporter:latest
+    profiles: ["observability"]
+    environment:
+      DATA_SOURCE_NAME: "postgresql://hrms:hrms@shard-4:5432/hrms_shard4?sslmode=disable"
+    ports:
+      - "9105:9187"
+
+  redis-exporter-queue:
+    image: oliver006/redis_exporter:latest
+    profiles: ["observability"]
+    command: ["-redis.addr", "redis://redis-queue:6379"]
+    ports:
+      - "9121:9121"
+
+  redis-exporter-kv:
+    image: oliver006/redis_exporter:latest
+    profiles: ["observability"]
+    command: ["-redis.addr", "redis://redis-kv:6379"]
+    ports:
+      - "9122:9121"
+
   prometheus:
     image: prom/prometheus:latest
     profiles: ["observability"]
@@ -111,6 +178,7 @@ services:
       - "9090:9090"
     volumes:
       - ./infrastructure/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infrastructure/monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus-data:/prometheus
 
   grafana:
@@ -123,7 +191,8 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: admin
     volumes:
       - grafana-data:/var/lib/grafana
-      - ./infrastructure/monitoring/grafana-provisioning:/etc/grafana/provisioning:ro
+      - ./infrastructure/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infrastructure/grafana/dashboards:/etc/grafana/dashboards:ro
 
 volumes:
   pg-catalog-data:

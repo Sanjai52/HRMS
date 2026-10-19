@@ -1,7 +1,20 @@
 import { describe, it, expect, beforeAll } from "vitest";
+import { Pool } from "pg";
 import { Snowflake, stableEmployeeBucket } from "@hrms/core";
 
 const base = process.env.API_BASE ?? "http://localhost:4000";
+const catalogUrl = process.env.CATALOG_DATABASE_URL;
+
+async function auditCount(action: string, resource: string): Promise<number> {
+  if (!catalogUrl) return -1;
+  const pool = new Pool({ connectionString: catalogUrl });
+  try {
+    const r = await pool.query("SELECT count(*)::int AS c FROM audit_logs WHERE action = $1 AND resource = $2", [action, resource]);
+    return (r.rows[0] as { c: number }).c;
+  } finally {
+    await pool.end();
+  }
+}
 
 async function hrLogin(): Promise<string> {
   const res = await fetch(`${base}/api/v1/auth/login`, {
@@ -19,6 +32,20 @@ async function runDispatcher(): Promise<{ delivered: number }> {
   expect(r.status).toBe(200);
   const body = (await r.json()) as { data: { delivered: number } };
   return body.data;
+}
+
+/**
+ * The live worker's dispatcher loop races this suite's drains (both claim outbox
+ * rows with SKIP LOCKED), so whichever side delivers, the *effect* lands
+ * asynchronously. Poll the effect with a bound instead of asserting instantly.
+ */
+async function waitFor<T>(fn: () => Promise<T>, ok: (v: T) => boolean, timeoutMs = 10_000): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const v = await fn();
+    if (ok(v) || Date.now() >= deadline) return v;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
 }
 
 async function adminToken(hrToken: string): Promise<string> {
@@ -71,21 +98,33 @@ describe("Phase 3 employee lifecycle", () => {
     const ob = (await onboard.json()) as { data: { employeeId: string; bucket: number; shard: string } };
     expect(stableEmployeeBucket(ob.data.employeeId)).toBe(ob.data.bucket);
 
-    const counts = await runDispatcher();
-    expect(counts.delivered).toBeGreaterThan(0);
+    await runDispatcher();
 
-    const dir = await fetch(`${base}/api/v1/employees?q=${encodeURIComponent("Hire " + tag)}`, {
-      headers: { authorization: `Bearer ${hr}` },
-    });
-    const dirBody = (await dir.json()) as { data: Array<{ employee_id: string }> };
+    const dirBody = await waitFor(
+      async () =>
+        (await (await fetch(`${base}/api/v1/employees?q=${encodeURIComponent("Hire " + tag)}`, {
+          headers: { authorization: `Bearer ${hr}` },
+        })).json()) as { data: Array<{ employee_id: string }> },
+      (b) => b.data.some((r) => r.employee_id === ob.data.employeeId),
+    );
     expect(dirBody.data.some((r) => r.employee_id === ob.data.employeeId)).toBe(true);
 
-    const suggest = await fetch(`${base}/api/v1/search/suggest?q=${encodeURIComponent("hire")}`, {
-      headers: { authorization: `Bearer ${hr}` },
-    });
-    expect(suggest.status).toBe(200);
-    const sugBody = (await suggest.json()) as { data: Array<{ employeeId: string }> };
+    const sugBody = await waitFor(
+      async () => {
+        const r = await fetch(`${base}/api/v1/search/suggest?q=${encodeURIComponent("hire")}`, {
+          headers: { authorization: `Bearer ${hr}` },
+        });
+        expect(r.status).toBe(200);
+        return (await r.json()) as { data: Array<{ employeeId: string }> };
+      },
+      (b) => b.data.some((x) => x.employeeId === ob.data.employeeId),
+    );
     expect(sugBody.data.some((r) => r.employeeId === ob.data.employeeId)).toBe(true);
+
+    if (catalogUrl) {
+      const n = await waitFor(() => auditCount("employee.onboarded", `employee:${ob.data.employeeId}`), (v) => v > 0);
+      expect(n).toBeGreaterThan(0);
+    }
   });
 
   it("update is version-checked; stale writes are rejected", async () => {
@@ -113,6 +152,51 @@ describe("Phase 3 employee lifecycle", () => {
     });
     expect(stale.status).toBe(409);
     await runDispatcher();
+    if (catalogUrl) {
+      const n = await waitFor(() => auditCount("employee.updated", `employee:${id}`), (v) => v > 0);
+      expect(n).toBeGreaterThan(0);
+    }
+  });
+
+  it("employee edits their own profile and the change is audited", async () => {
+    const hr = await hrLogin();
+    const email = `self${Date.now()}@hrms.local`;
+    const create = await fetch(`${base}/api/v1/auth/invitations`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${hr}` },
+      body: JSON.stringify({ email, name: "Self Service", role: "EMPLOYEE" }),
+    });
+    expect(create.status).toBe(201);
+    const { data } = (await create.json()) as { data: { invitationId: string; token: string } };
+    const accept = await fetch(`${base}/api/v1/auth/accept`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: data.token, password: "SelfPass12!" }),
+    });
+    const accepted = (await accept.json()) as { data: { token: string } };
+    const onboard = await fetch(`${base}/api/v1/employees/onboard`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${hr}` },
+      body: JSON.stringify({ invitationId: data.invitationId }),
+    });
+    expect(onboard.status).toBe(201);
+    const ob = (await onboard.json()) as { data: { employeeId: string } };
+    await runDispatcher();
+
+    const me = await fetch(`${base}/api/v1/employees/me`, { headers: { authorization: `Bearer ${accepted.data.token}` } });
+    expect(me.status).toBe(200);
+    const meBody = (await me.json()) as { data: { version: number } };
+    const upd = await fetch(`${base}/api/v1/employees/me`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", authorization: `Bearer ${accepted.data.token}` },
+      body: JSON.stringify({ name: "Self Service Jr", version: meBody.data.version }),
+    });
+    expect(upd.status).toBe(200);
+    await runDispatcher();
+    if (catalogUrl) {
+      const n = await waitFor(() => auditCount("employee.profile_updated", `employee:${ob.data.employeeId}`), (v) => v > 0);
+      expect(n).toBeGreaterThan(0);
+    }
   });
 
   it("deactivate removes the directory row and suggestions; rebuild repairs a lost projection", async () => {
@@ -129,9 +213,13 @@ describe("Phase 3 employee lifecycle", () => {
     });
     expect(deact.status).toBe(200);
     await runDispatcher();
-    const gone = (await (await fetch(`${base}/api/v1/employees?q=${encodeURIComponent("Hire " + tag)}`, {
-      headers: { authorization: `Bearer ${hr}` },
-    })).json()) as { data: unknown[] };
+    const gone = await waitFor(
+      async () =>
+        (await (await fetch(`${base}/api/v1/employees?q=${encodeURIComponent("Hire " + tag)}`, {
+          headers: { authorization: `Bearer ${hr}` },
+        })).json()) as { data: unknown[] },
+      (b) => b.data.length === 0,
+    );
     expect(gone.data.length).toBe(0);
 
     const rebuild = await fetch(`${base}/api/v1/admin/rebuild-directory`, {
@@ -145,6 +233,15 @@ describe("Phase 3 employee lifecycle", () => {
       headers: { authorization: `Bearer ${hr}` },
     })).json()) as { data: unknown[] };
     expect(stillGone.data.length).toBe(0);
+  });
+
+  it("team read exposes a healthy partial meta", async () => {
+    const hr = await hrLogin();
+    const r = await fetch(`${base}/api/v1/employees/team`, { headers: { authorization: `Bearer ${hr}` } });
+    expect(r.status).toBe(200);
+    const body = (await r.json()) as { meta: { partial: boolean; unavailable: string[] } };
+    expect(body.meta.partial).toBe(false);
+    expect(body.meta.unavailable).toEqual([]);
   });
 
   it("two leased generators interleave without duplicates", async () => {

@@ -1,7 +1,20 @@
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
+import { Pool } from "pg";
 
 const base = process.env.API_BASE ?? "http://localhost:4000";
+const catalogUrl = process.env.CATALOG_DATABASE_URL;
 const tag = Date.now();
+
+async function auditCount(action: string, resource: string): Promise<number> {
+  if (!catalogUrl) return -1;
+  const pool = new Pool({ connectionString: catalogUrl });
+  try {
+    const r = await pool.query("SELECT count(*)::int AS c FROM audit_logs WHERE action = $1 AND resource = $2", [action, resource]);
+    return (r.rows[0] as { c: number }).c;
+  } finally {
+    await pool.end();
+  }
+}
 
 async function hrLogin(): Promise<string> {
   const res = await fetch(`${base}/api/v1/auth/login`, {
@@ -76,7 +89,9 @@ async function getRequest(token: string, id: string): Promise<{ status: string; 
 }
 
 describe("Phase 4 attendance and leave", () => {
-  beforeAll(async () => {
+  beforeEach(async () => {
+    // This file creates >10 invited persons; the accept scope is 10/min per IP.
+    // Reset between tests so the suite exercises behavior, not the limiter budget.
     await fetch(`${base}/system/test/reset-limiter`, { method: "POST" });
   });
 
@@ -239,9 +254,26 @@ describe("Phase 4 attendance and leave", () => {
       headers: { authorization: `Bearer ${hr}` },
     });
     expect(cancel.status).toBe(200);
+    await fetch(`${base}/system/test/run-dispatcher`, { method: "POST" });
+    if (catalogUrl) expect(await auditCount("leave.cancelled", `leave:${applied.id}`)).toBeGreaterThan(0);
     const bal = await fetch(`${base}/api/v1/leave/balances?employeeId=${e.employeeId}`, { headers: { authorization: `Bearer ${hr}` } });
     const balBody = (await bal.json()) as { data: Array<{ leave_type: string; used_days: number }> };
     expect(balBody.data.find((b) => b.leave_type === "CASUAL")?.used_days).toBe(0);
     void req;
+  });
+
+  it("scatter-gather reads expose a healthy partial meta", async () => {
+    const hr = await hrLogin();
+    const day = await fetch(`${base}/api/v1/attendance/day`, { headers: { authorization: `Bearer ${hr}` } });
+    expect(day.status).toBe(200);
+    const dayBody = (await day.json()) as { meta: { partial: boolean; unavailable: string[] } };
+    expect(dayBody.meta.partial).toBe(false);
+    expect(dayBody.meta.unavailable).toEqual([]);
+
+    const list = await fetch(`${base}/api/v1/leave/requests`, { headers: { authorization: `Bearer ${hr}` } });
+    expect(list.status).toBe(200);
+    const listBody = (await list.json()) as { meta: { partial: boolean; unavailable: string[] } };
+    expect(listBody.meta.partial).toBe(false);
+    expect(listBody.meta.unavailable).toEqual([]);
   });
 });

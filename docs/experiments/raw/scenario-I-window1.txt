@@ -1,0 +1,24 @@
+--- probe a: employee check-in (routed to dead shard-2) ---
+{"success":false,"error":{"code":"DEPENDENCY_UNAVAILABLE","message":"A backend dependency is unavailable; retry shortly"}}
+HTTP 503 after 0.028941s
+--- probe a2: employee attendance/me (own shard read) ---
+{"success":false,"error":{"code":"DEPENDENCY_UNAVAILABLE","message":"A backend dependency is unavailable; retry shortly"}}
+HTTP 503 after 0.009534s
+--- probe b: HR reports/overview?month=2026-10 ---
+{"success":true,"data":{"month":"2026-10","headcount":[{"department":"","n":"834"},{"department":"Engineering","n":"37"},{"department":"HR","n":"10"},{"department":"Finance","n":"8"},{"department":"Sales","n":"7"},{"department":"Design","n":"7"},{"department":"T15 Support 1792320062352","n":"2"},{"department":"T15 Support 1792233580153","n":"2"},{"department":"T15 Support 1792231252284","n":"2"},{"department":"T15 Support 1792320206989","n":"2"},{"department":"T15 Support 1792232706458","n":"2"},{"department":"T15 Support 1792231509328","n":"2"},{"department":"T15 Support 1792320659293","n":"2"},{"department":"T15 Support 1792231388931","n":"2"},{"department":"T15 Support 1792320544726","n":"2"},{"department":"T15 Support 1792231810682","n":"2"},{"department":"T15 Support 1792232055945","n":"2"},{"department":"T15 Support 1792234272049","n":"2"},{"department":"T15 Support 1792231357808",
+--- probe c: HR attendance/day?date=2026-10-18 ---
+{"success":true,"data":[{"employee_id":"47c15fe8-75f3-4153-b2df-53cbb717f985","workday":"2026-10-17T18:30:00.000Z","check_in":"2026-10-18T10:42:32.778Z","check_out":"2026-10-18T10:42:32.829Z","status":"LATE","name":"Atty One","department":""},{"employee_id":"607a056d-4447-4a82-a2e3-2beb249d4149","workday":"2026-10-17T18:30:00.000Z","check_in":"2026-10-18T10:48:11.330Z","check_out":"2026-10-18T10:48:11.370Z","status":"LATE","name":"Atty One","department":""},{"employee_id":"f52f0a91-e578-4593-b8a7-66f00963e5e9","workday":"2026-10-17T18:30:00.000Z","check_in":"2026-10-18T10:50:10.656Z","check_out":"2026-10-18T10:50:10.706Z","status":"LATE","name":"Atty One","department":""},{"employee_id":"64c
+--- probe d: HR employees/team ---
+{"success":true,"data":[{"employee_id":"aaaaaaaa-0000-4000-8000-000000000124","name":"Aarav Sharma","email":"aarav.demo24@hrms.local","department":"Engineering","designation":"HR Executive","status":"ACTIVE"},{"employee_id":"aaaaaaaa-0000-4000-8000-000000000121","name":"Aditi Nair","email":"aditi.demo21@hrms.local","department":"Design","designation":"Engineer","status":"ACTIVE"},{"employee_id":"e0f0d4a6-f7b3-4ad3-b9b5-2f296f685904","name":"Ann Blocked","email":"annblocked1792230669615757@hrms.local","department":"","designation":"","status":"ACTIVE"},{"employee_id":"05d7936a-9f31-4a51-916c-27ff3b147a3f","name":"Ann Blocked","email":"annblocked17922320663828762@hrms.local","department":"","d
+--- probe e: HR employees?q= (catalog directory read, no shard dependency) ---
+{"success":true,"data":[{"employee_id":"aaaaaaaa-0000-4000-8000-000000000124","name":"Aarav Sharma","email":"aarav.demo24@hrms.local","department":"Engineering","designation":"HR Executive","status":"ACTIVE","updated_at":"2026-10-18T10:50:55.768Z"},{"employee_id":"aaaaaaaa-0000-4000-8000-000000000148","name":"Aarav Sharma","email":"aarav.demo48@hrms.local","department":"Engineering","designation":
+--- probe f: HR employees/0d7e7a32-afbc-4950-8345-eed0f2d5c4f2 (owning shard dead) ---
+{"success":false,"error":{"code":"DEPENDENCY_UNAVAILABLE","message":"A backend dependency is unavailable; retry shortly"}}
+HTTP 503 after 0.008017s
+--- recovery a: employee check-in ---
+{"success":true,"data":{"attendance_id":"105299345888256000","check_in":"2026-10-18T13:42:00.427Z","check_out":null,"status":"LATE","duplicate":false}}
+HTTP 201 after 0.072693s
+--- recovery b: HR reports/overview ---
+{"success":true,"data":{"month":"2026-10","headcount":[{"department":"","n":"834"},{"department":"Engineering","n":"37"},{"department":"HR","n":"10"},{"department":"Finance","n":"8"},{"department":"Sales","n":"7"},{"department":"Design","n":"7"},{"department":"T15 Support 1792320062352","n":"2"},{"department":"T15 Support 1792233580153","n":"2"},{"department":"T15 Support 1792231252284","n":"2"},{
+--- recovery c: HR employees/team meta ---
+rows=150 meta={"partial":false,"unavailable":[]}

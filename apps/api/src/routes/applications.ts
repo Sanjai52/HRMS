@@ -6,15 +6,17 @@ import {
   loadMapByDomain,
   stableEmployeeBucket,
   canTransition,
-  withFencedWrite,
   GateClosedError,
 } from "@hrms/core";
+import { fencedWrite } from "../fenced.js";
 import { nextEventId } from "../ids.js";
 import { LeaseExpiredError } from "@hrms/core";
-import { catalogPool, shardPools } from "../db/pools.js";
+import { catalogPool } from "../db/pools.js";
+import { ownedShardPools, partialMeta, poolFor, type ShardPool } from "../db/shards.js";
 import { requireAuth, requireRoles, type AuthedRequest } from "../middleware/auth.js";
 import { publicApplyLimit, shortLinkLimit } from "../middleware/rate-limit.js";
 import { writeAudit } from "../audit/audit.js";
+import { assertCatalogOpen, CatalogGateError, gateError } from "../catalog-gate.js";
 import { createStorage } from "../storage/minio.js";
 import { hashToken } from "../auth/sessions.js";
 
@@ -22,15 +24,15 @@ export const applicationsRouter = Router();
 
 const CANDIDATE_DOMAIN = "candidate";
 
-async function candidatePool(candidateId: string): Promise<{ pool: (typeof shardPools)[string]; bucket: number; shard: string } | null> {
+async function candidatePool(candidateId: string): Promise<{ pool: ShardPool; bucket: number; shard: string } | null> {
   const { map } = await loadMapByDomain(catalogPool, CANDIDATE_DOMAIN);
   const bucket = stableEmployeeBucket(candidateId);
   const shard = map.get(bucket);
-  const pool = shard ? shardPools[shard] : undefined;
+  const pool = shard ? poolFor(shard) : undefined;
   return pool ? { pool, bucket, shard: shard as string } : null;
 }
 
-async function routeApplication(applicationId: string): Promise<{ pool: (typeof shardPools)[string]; bucket: number; candidateId: string; jobId: string } | null> {
+async function routeApplication(applicationId: string): Promise<{ pool: ShardPool; bucket: number; candidateId: string; jobId: string } | null> {
   const idx = await catalogPool.query("SELECT candidate_id, job_id FROM application_index WHERE application_id = $1", [applicationId]);
   if (idx.rows.length === 0) return null;
   const candidateId = (idx.rows[0] as { candidate_id: string }).candidate_id;
@@ -89,13 +91,28 @@ applicationsRouter.post(
       }
       throw e;
     }
-    const claimed = await catalogPool.query("INSERT INTO candidate_email_claims (email_norm, candidate_id) VALUES ($1, $2) ON CONFLICT (email_norm) DO NOTHING RETURNING candidate_id", [norm, `cand-${appId}`]);
+    const claimClient = await catalogPool.connect();
     let candidateId: string;
-    if (claimed.rows.length > 0) {
-      candidateId = (claimed.rows[0] as { candidate_id: string }).candidate_id;
-    } else {
-      const existing = await catalogPool.query("SELECT candidate_id FROM candidate_email_claims WHERE email_norm = $1", [norm]);
-      candidateId = (existing.rows[0] as { candidate_id: string }).candidate_id;
+    try {
+      await claimClient.query("BEGIN");
+      await assertCatalogOpen(claimClient);
+      const claimed = await claimClient.query("INSERT INTO candidate_email_claims (email_norm, candidate_id) VALUES ($1, $2) ON CONFLICT (email_norm) DO NOTHING RETURNING candidate_id", [norm, `cand-${appId}`]);
+      if (claimed.rows.length > 0) {
+        candidateId = (claimed.rows[0] as { candidate_id: string }).candidate_id;
+      } else {
+        const existing = await claimClient.query("SELECT candidate_id FROM candidate_email_claims WHERE email_norm = $1", [norm]);
+        candidateId = (existing.rows[0] as { candidate_id: string }).candidate_id;
+      }
+      await claimClient.query("COMMIT");
+    } catch (e) {
+      await claimClient.query("ROLLBACK");
+      if (e instanceof CatalogGateError) {
+        gateError(res);
+        return;
+      }
+      throw e;
+    } finally {
+      claimClient.release();
     }
     const route = await candidatePool(candidateId);
     if (!route) {
@@ -109,12 +126,23 @@ applicationsRouter.post(
         res.status(409).json(errorEnvelope("DUPLICATE_APPLICATION", "You have already applied for this role"));
         return;
       }
-      await route.pool.query("UPDATE applications SET stage = 'APPLIED', version = version + 1, updated_at = now() WHERE application_id = $1", [(existing.rows[0] as { application_id: string }).application_id]);
-      res.json({ success: true, data: { applicationId: (existing.rows[0] as { application_id: string }).application_id, reused: true } });
+      const reusedId = (existing.rows[0] as { application_id: string }).application_id;
+      try {
+        await fencedWrite(route.pool, async (c) => {
+          await c.query("UPDATE applications SET stage = 'APPLIED', version = version + 1, updated_at = now() WHERE application_id = $1", [reusedId]);
+        });
+      } catch (e) {
+        if (e instanceof GateClosedError) {
+          res.status(503).json(errorEnvelope("GATE_CLOSED", "Writes are paused for maintenance. Try again shortly."));
+          return;
+        }
+        throw e;
+      }
+      res.json({ success: true, data: { applicationId: reusedId, reused: true } });
       return;
     }
     try {
-      await withFencedWrite(route.pool, async (c) => {
+      await fencedWrite(route.pool, async (c) => {
         await c.query(
           "INSERT INTO candidates (candidate_id, candidate_bucket_id, name, email, phone, skills, experience_years, resume_key, source) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'direct') ON CONFLICT (candidate_id) DO UPDATE SET name = EXCLUDED.name, phone = EXCLUDED.phone, skills = EXCLUDED.skills, experience_years = EXCLUDED.experience_years",
           [candidateId, route.bucket, name.trim(), norm, typeof phone === "string" ? phone.slice(0, 30) : "", skillList, expYears, resumeKey]
@@ -129,9 +157,24 @@ applicationsRouter.post(
       }
       throw e;
     }
-    await catalogPool.query("INSERT INTO application_index (application_id, candidate_id, job_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", [appId, candidateId, req.params.jobId]);
     const statusToken = randomBytes(32).toString("hex");
-    await catalogPool.query("INSERT INTO app_status_tokens (token_hash, application_id, expires_at) VALUES ($1, $2, now() + interval '30 days')", [hashToken(statusToken), appId]);
+    const indexClient = await catalogPool.connect();
+    try {
+      await indexClient.query("BEGIN");
+      await assertCatalogOpen(indexClient);
+      await indexClient.query("INSERT INTO application_index (application_id, candidate_id, job_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", [appId, candidateId, req.params.jobId]);
+      await indexClient.query("INSERT INTO app_status_tokens (token_hash, application_id, expires_at) VALUES ($1, $2, now() + interval '30 days')", [hashToken(statusToken), appId]);
+      await indexClient.query("COMMIT");
+    } catch (e) {
+      await indexClient.query("ROLLBACK");
+      if (e instanceof CatalogGateError) {
+        gateError(res);
+        return;
+      }
+      throw e;
+    } finally {
+      indexClient.release();
+    }
     res.status(201).json({ success: true, data: { applicationId: appId, statusToken } });
   }
 );
@@ -166,14 +209,18 @@ applicationsRouter.get("/candidates", requireAuth, requireRoles("HR", "ADMIN"), 
     (owned[shard] ??= []).push(bucket);
   }
   const out: unknown[] = [];
-  for (const [shard, pool] of Object.entries(shardPools)) {
-    if (shard === "shard-4") continue;
-    const r = q
-      ? await pool.query("SELECT candidate_id, name, email, source, created_at FROM candidates WHERE candidate_bucket_id = ANY($2) AND (name ILIKE $1 OR email LIKE $1) ORDER BY created_at DESC LIMIT 30", [`%${q}%`, owned[shard] ?? []])
-      : await pool.query("SELECT candidate_id, name, email, source, created_at FROM candidates WHERE candidate_bucket_id = ANY($1) ORDER BY created_at DESC LIMIT 30", [owned[shard] ?? []]);
-    out.push(...r.rows);
+  const unavailable: string[] = [];
+  for (const { shard, pool } of ownedShardPools()) {
+    try {
+      const r = q
+        ? await pool.query("SELECT candidate_id, name, email, source, created_at FROM candidates WHERE candidate_bucket_id = ANY($2) AND (name ILIKE $1 OR email LIKE $1) ORDER BY created_at DESC LIMIT 30", [`%${q}%`, owned[shard] ?? []])
+        : await pool.query("SELECT candidate_id, name, email, source, created_at FROM candidates WHERE candidate_bucket_id = ANY($1) ORDER BY created_at DESC LIMIT 30", [owned[shard] ?? []]);
+      out.push(...r.rows);
+    } catch {
+      unavailable.push(shard);
+    }
   }
-  res.json({ success: true, data: out });
+  res.json({ success: true, data: out, meta: partialMeta(unavailable) });
 });
 
 applicationsRouter.get("/candidates/:id", requireAuth, requireRoles("HR", "ADMIN"), async (req, res) => {
@@ -200,15 +247,19 @@ applicationsRouter.get("/applications", requireAuth, requireRoles("HR", "ADMIN")
     (owned[shard] ??= []).push(bucket);
   }
   const out: unknown[] = [];
-  for (const [shard, pool] of Object.entries(shardPools)) {
-    if (shard === "shard-4") continue;
-    const r = await pool.query(
-      "SELECT a.*, c.name AS candidate_name FROM applications a JOIN candidates c ON c.candidate_id = a.candidate_id WHERE a.candidate_bucket_id = ANY($3) AND ($1::text IS NULL OR a.job_id = $1) AND ($2::text IS NULL OR a.stage = $2) ORDER BY a.applied_at DESC LIMIT 50",
-      [jobId, stage, owned[shard] ?? []]
-    );
-    out.push(...r.rows);
+  const unavailable: string[] = [];
+  for (const { shard, pool } of ownedShardPools()) {
+    try {
+      const r = await pool.query(
+        "SELECT a.*, c.name AS candidate_name FROM applications a JOIN candidates c ON c.candidate_id = a.candidate_id WHERE a.candidate_bucket_id = ANY($3) AND ($1::text IS NULL OR a.job_id = $1) AND ($2::text IS NULL OR a.stage = $2) ORDER BY a.applied_at DESC LIMIT 50",
+        [jobId, stage, owned[shard] ?? []]
+      );
+      out.push(...r.rows);
+    } catch {
+      unavailable.push(shard);
+    }
   }
-  res.json({ success: true, data: out });
+  res.json({ success: true, data: out, meta: partialMeta(unavailable) });
 });
 
 applicationsRouter.get("/applications/:id", requireAuth, requireRoles("HR", "ADMIN"), async (req, res) => {
@@ -247,7 +298,7 @@ applicationsRouter.post("/applications/:id/stage", requireAuth, requireRoles("HR
     throw e;
   }
   try {
-    const updated = await withFencedWrite(route.pool, async (c) => {
+    const updated = await fencedWrite(route.pool, async (c) => {
       const cur = await c.query("SELECT stage, version FROM applications WHERE application_id = $1", [req.params.id]);
       if (cur.rows.length === 0) return null;
       const from = (cur.rows[0] as { stage: string }).stage;
@@ -314,14 +365,30 @@ applicationsRouter.post("/applications/:id/interviews", requireAuth, requireRole
     }
     throw e;
   }
-  await route.pool.query("INSERT INTO interviews (interview_id, application_id, candidate_bucket_id, round, interviewer, scheduled_at) VALUES ($1,$2,$3,$4,$5,$6)", [
-    id,
-    req.params.id,
-    route.bucket,
-    round,
-    (interviewer as string) ?? "",
-    (scheduledAt as string) ?? null,
-  ]);
+  try {
+    await fencedWrite(route.pool, async (c) => {
+      await c.query("INSERT INTO interviews (interview_id, application_id, candidate_bucket_id, round, interviewer, scheduled_at) VALUES ($1,$2,$3,$4,$5,$6)", [
+        id,
+        req.params.id,
+        route.bucket,
+        round,
+        (interviewer as string) ?? "",
+        (scheduledAt as string) ?? null,
+      ]);
+      await c.query("INSERT INTO candidate_outbox (event_id, candidate_id, candidate_bucket_id, type, payload) VALUES ($1,$2,$3,'AUDIT',$4)", [
+        `${id}-audit`,
+        route.candidateId,
+        route.bucket,
+        JSON.stringify({ actor: req.userId ?? "", action: "interview.created", resource: `interview:${id}`, metadata: { applicationId: req.params.id } }),
+      ]);
+    });
+  } catch (e) {
+    if (e instanceof GateClosedError) {
+      res.status(503).json(errorEnvelope("GATE_CLOSED", "Writes are paused for maintenance. Try again shortly."));
+      return;
+    }
+    throw e;
+  }
   res.status(201).json({ success: true, data: { interviewId: id } });
 });
 
@@ -336,12 +403,38 @@ applicationsRouter.post("/applications/:id/interviews/:interviewId", requireAuth
     res.status(404).json(errorEnvelope("NOT_FOUND", "Application not found"));
     return;
   }
-  await route.pool.query("UPDATE interviews SET status = COALESCE($3, status), feedback = COALESCE($4, feedback) WHERE interview_id = $1 AND application_id = $2", [
-    req.params.interviewId,
-    req.params.id,
-    status ?? null,
-    (feedback as string) ?? null,
-  ]);
+  let eventId: string;
+  try {
+    eventId = nextEventId();
+  } catch (e) {
+    if (e instanceof LeaseExpiredError) {
+      res.status(503).json(errorEnvelope("ID_LEASE_UNAVAILABLE", "ID generation is paused. Try again shortly."));
+      return;
+    }
+    throw e;
+  }
+  try {
+    await fencedWrite(route.pool, async (c) => {
+      await c.query("UPDATE interviews SET status = COALESCE($3, status), feedback = COALESCE($4, feedback) WHERE interview_id = $1 AND application_id = $2", [
+        req.params.interviewId,
+        req.params.id,
+        status ?? null,
+        (feedback as string) ?? null,
+      ]);
+      await c.query("INSERT INTO candidate_outbox (event_id, candidate_id, candidate_bucket_id, type, payload) VALUES ($1,$2,$3,'AUDIT',$4)", [
+        `${eventId}-audit`,
+        route.candidateId,
+        route.bucket,
+        JSON.stringify({ actor: req.userId ?? "", action: "interview.updated", resource: `interview:${req.params.interviewId}`, metadata: { applicationId: req.params.id, status: status ?? null } }),
+      ]);
+    });
+  } catch (e) {
+    if (e instanceof GateClosedError) {
+      res.status(503).json(errorEnvelope("GATE_CLOSED", "Writes are paused for maintenance. Try again shortly."));
+      return;
+    }
+    throw e;
+  }
   res.json({ success: true, data: null });
 });
 
@@ -366,13 +459,29 @@ applicationsRouter.post("/applications/:id/assessments", requireAuth, requireRol
     }
     throw e;
   }
-  await route.pool.query("INSERT INTO assessments (assessment_id, application_id, candidate_bucket_id, type, score, status, completed_at) VALUES ($1,$2,$3,$4,$5,'COMPLETED',now())", [
-    id,
-    req.params.id,
-    route.bucket,
-    type,
-    (score as string) ?? "",
-  ]);
+  try {
+    await fencedWrite(route.pool, async (c) => {
+      await c.query("INSERT INTO assessments (assessment_id, application_id, candidate_bucket_id, type, score, status, completed_at) VALUES ($1,$2,$3,$4,$5,'COMPLETED',now())", [
+        id,
+        req.params.id,
+        route.bucket,
+        type,
+        (score as string) ?? "",
+      ]);
+      await c.query("INSERT INTO candidate_outbox (event_id, candidate_id, candidate_bucket_id, type, payload) VALUES ($1,$2,$3,'AUDIT',$4)", [
+        `${id}-audit`,
+        route.candidateId,
+        route.bucket,
+        JSON.stringify({ actor: req.userId ?? "", action: "assessment.completed", resource: `assessment:${id}`, metadata: { applicationId: req.params.id } }),
+      ]);
+    });
+  } catch (e) {
+    if (e instanceof GateClosedError) {
+      res.status(503).json(errorEnvelope("GATE_CLOSED", "Writes are paused for maintenance. Try again shortly."));
+      return;
+    }
+    throw e;
+  }
   res.status(201).json({ success: true, data: { assessmentId: id } });
 });
 
@@ -399,14 +508,19 @@ applicationsRouter.post("/applications/:id/convert", requireAuth, requireRoles("
   const client = await catalogPool.connect();
   try {
     await client.query("BEGIN");
+    await assertCatalogOpen(client);
     await client.query(
       "INSERT INTO invitations (invitation_id, email, email_norm, name, role, token_hash, status, expires_at, created_by) VALUES ($1,$2,$3,$4,'EMPLOYEE',$5,'INVITED', now() + interval '7 days', $6)",
       [invitationId, c.email, c.email.toLowerCase(), c.name, hashToken(token), req.userId ?? ""]
     );
     await writeAudit({ query: client.query.bind(client) }, { actor: req.userId ?? "", action: "candidate.converted", resource: `application:${req.params.id}`, metadata: { invitationId } });
     await client.query("COMMIT");
-  } catch (e: unknown) {
+  } catch (e) {
     await client.query("ROLLBACK");
+    if (e instanceof CatalogGateError) {
+      gateError(res);
+      return;
+    }
     if (typeof e === "object" && e !== null && "code" in e && (e as { code: string }).code === "23505") {
       res.status(409).json(errorEnvelope("DUPLICATE_IDENTITY", "This email already has an account or invitation"));
       return;
@@ -415,6 +529,16 @@ applicationsRouter.post("/applications/:id/convert", requireAuth, requireRoles("
   } finally {
     client.release();
   }
-  await route.pool.query("UPDATE applications SET converted_invitation_id = $2 WHERE application_id = $1", [req.params.id, invitationId]);
+  try {
+    await fencedWrite(route.pool, async (c) => {
+      await c.query("UPDATE applications SET converted_invitation_id = $2 WHERE application_id = $1", [req.params.id, invitationId]);
+    });
+  } catch (e) {
+    if (e instanceof GateClosedError) {
+      res.status(503).json(errorEnvelope("GATE_CLOSED", "Writes are paused for maintenance. Try again shortly."));
+      return;
+    }
+    throw e;
+  }
   res.status(201).json({ success: true, data: { invitationId, token } });
 });

@@ -3,6 +3,8 @@ import express from "express";
 const app = express();
 const PORT = Number(process.env.PORTAL_PORT ?? 4100);
 
+app.use(express.json());
+
 const PEOPLE = [
   { id: "p01", name: "Nila Fernando", email: "nila.fernando@example.com", phone: "9810000001", skills: ["Node.js", "Postgres", "Redis"], exp: 4 },
   { id: "p02", name: "Ravi Shankar", email: "ravi.shankar@example.com", phone: "9810000002", skills: ["Python", "Django", "Postgres"], exp: 6 },
@@ -51,6 +53,27 @@ app.get("/listings", async (req, res) => {
 
 app.get("/profiles/broken-500", (_req, res) => {
   res.status(500).send("boom");
+});
+
+// Test support: e2e suites seed a fresh profile so a crawler run deterministically
+// discovers and imports at least one new candidate (the fixture list above is fully
+// deduped after the first run). Not part of the demo surface.
+app.post("/test/seed", (req, res) => {
+  const { name, email, phone, skills, exp } = req.body ?? {};
+  if (typeof name !== "string" || name.trim() === "" || typeof email !== "string" || !email.includes("@")) {
+    res.status(400).json({ error: "name and email are required" });
+    return;
+  }
+  const person = {
+    id: `t${PEOPLE.length + 1}`,
+    name,
+    email,
+    phone: typeof phone === "string" ? phone : "",
+    skills: Array.isArray(skills) ? skills.map(String) : [],
+    exp: Number.isFinite(Number(exp)) ? Number(exp) : 0,
+  };
+  PEOPLE.push(person);
+  res.status(201).json({ id: person.id });
 });
 
 app.get("/profiles/:id", async (req, res) => {

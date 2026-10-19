@@ -2,14 +2,15 @@ import { Router } from "express";
 import {
   errorEnvelope,
   countWorkdays,
-  withFencedWrite,
   GateClosedError,
   loadActiveMap,
   resolveShard,
 } from "@hrms/core";
+import { fencedWrite } from "../fenced.js";
 import { nextEventId } from "../ids.js";
 import { LeaseExpiredError } from "@hrms/core";
-import { catalogPool, shardPools } from "../db/pools.js";
+import { catalogPool } from "../db/pools.js";
+import { ownedShardPools, partialMeta, type ShardPool } from "../db/shards.js";
 import { requireAuth, requireRoles, type AuthedRequest } from "../middleware/auth.js";
 import { selfEmployeeId, shardFor, ownedBuckets } from "../directory/self.js";
 
@@ -105,7 +106,7 @@ leaveRouter.post("/requests", requireAuth, async (req: AuthedRequest, res) => {
   }
   const year = Number(start.slice(0, 4));
   try {
-    const request = await withFencedWrite(t.pool, async (c) => {
+    const request = await fencedWrite(t.pool, async (c) => {
       await c.query(
         "INSERT INTO leave_balances (employee_id, bucket_id, leave_type, year, total_days) VALUES ($1, (SELECT bucket_id FROM employees WHERE employee_id = $1), $2, $3, $4) ON CONFLICT DO NOTHING",
         [employeeId, type, year, total]
@@ -161,8 +162,7 @@ leaveRouter.get("/requests", requireAuth, async (req: AuthedRequest, res) => {
   const owned = await ownedBuckets();
   const out: unknown[] = [];
   const partial: string[] = [];
-  for (const [shard, pool] of Object.entries(shardPools)) {
-    if (shard === "shard-4") continue;
+  for (const { shard, pool } of ownedShardPools()) {
     try {
       if (mineOnly) {
         const me = await selfEmployeeId(req);
@@ -190,7 +190,7 @@ leaveRouter.get("/requests", requireAuth, async (req: AuthedRequest, res) => {
       partial.push(shard);
     }
   }
-  res.json({ success: true, data: out, meta: partial.length > 0 ? { partial: true, unavailable: partial } : { partial: false } });
+  res.json({ success: true, data: out, meta: partialMeta(partial) });
 });
 
 async function decide(
@@ -207,9 +207,8 @@ async function decide(
   const roles = req.roles ?? [];
   const me = await selfEmployeeId(req);
   const owned = await ownedBuckets();
-  let found: { shard: string; pool: (typeof shardPools)[string]; row: LeaveRow } | null = null;
-  for (const [shard, pool] of Object.entries(shardPools)) {
-    if (shard === "shard-4") continue;
+  let found: { shard: string; pool: ShardPool; row: LeaveRow } | null = null;
+  for (const { shard, pool } of ownedShardPools()) {
     const r = await pool.query("SELECT * FROM leave_requests WHERE request_id = $1 AND bucket_id = ANY($2)", [req.params.id, owned[shard] ?? []]);
     if (r.rows.length > 0) {
       found = { shard, pool, row: r.rows[0] as LeaveRow };
@@ -267,7 +266,7 @@ async function decide(
   }
   try {
     const next = to === "APPROVED" && row.status === "PENDING_MANAGER" && !isHr ? "PENDING_HR" : to;
-    await withFencedWrite(found.pool, async (c) => {
+    await fencedWrite(found.pool, async (c) => {
       const current = await c.query("SELECT status, version FROM leave_requests WHERE request_id = $1", [req.params.id]);
       if (current.rows.length === 0 || (current.rows[0] as LeaveRow).version !== version) throw new Error("VERSION_CONFLICT");
       await c.query("UPDATE leave_requests SET status = $2, version = version + 1, decided_by = $3, decided_at = now() WHERE request_id = $1", [
@@ -336,9 +335,8 @@ leaveRouter.post("/requests/:id/cancel", requireAuth, async (req: AuthedRequest,
   const me = await selfEmployeeId(req);
   const roles = req.roles ?? [];
   const owned = await ownedBuckets();
-  let found: { pool: (typeof shardPools)[string]; row: LeaveRow } | null = null;
-  for (const [shard, pool] of Object.entries(shardPools)) {
-    if (shard === "shard-4") continue;
+  let found: { pool: ShardPool; row: LeaveRow } | null = null;
+  for (const { shard, pool } of ownedShardPools()) {
     const r = await pool.query("SELECT * FROM leave_requests WHERE request_id = $1 AND bucket_id = ANY($2)", [req.params.id, owned[shard] ?? []]);
     if (r.rows.length > 0) {
       found = { pool, row: r.rows[0] as LeaveRow };
@@ -376,7 +374,7 @@ leaveRouter.post("/requests/:id/cancel", requireAuth, async (req: AuthedRequest,
   }
   const wasApproved = row.status === "APPROVED";
   try {
-    await withFencedWrite(found.pool, async (c) => {
+    await fencedWrite(found.pool, async (c) => {
       await c.query("UPDATE leave_requests SET status = 'CANCELLED', version = version + 1 WHERE request_id = $1", [req.params.id]);
       if (wasApproved) {
         await c.query("UPDATE leave_balances SET used_days = GREATEST(0, used_days - $3) WHERE employee_id = $1 AND leave_type = $2 AND year = $4", [
@@ -391,6 +389,13 @@ leaveRouter.post("/requests/:id/cancel", requireAuth, async (req: AuthedRequest,
         row.employee_id,
         row.bucket_id,
         JSON.stringify({ requestId: req.params.id, status: "CANCELLED", approver: req.userId ?? "" }),
+        row.version + 1,
+      ]);
+      await c.query("INSERT INTO outbox_events (event_id, employee_id, bucket_id, type, payload, version) VALUES ($1,$2,$3,'AUDIT',$4,$5)", [
+        `${eventId}-audit`,
+        row.employee_id,
+        row.bucket_id,
+        JSON.stringify({ actor: req.userId ?? "", action: "leave.cancelled", resource: `leave:${req.params.id}` }),
         row.version + 1,
       ]);
     });

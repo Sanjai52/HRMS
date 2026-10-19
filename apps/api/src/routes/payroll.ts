@@ -1,17 +1,20 @@
 import { Router } from "express";
 import {
+  ACTIVE_SHARDS,
   errorEnvelope,
   loadActiveMap,
   resolveShard,
-  withFencedWrite,
   GateClosedError,
 } from "@hrms/core";
+import { fencedWrite } from "../fenced.js";
 import { nextEventId } from "../ids.js";
 import { LeaseExpiredError } from "@hrms/core";
-import { catalogPool, shardPools } from "../db/pools.js";
+import { catalogPool } from "../db/pools.js";
+import { ownedShardPools, partialMeta, poolFor } from "../db/shards.js";
 import { requireAuth, requireRoles, type AuthedRequest } from "../middleware/auth.js";
 import { selfEmployeeId, shardFor, ownedBuckets } from "../directory/self.js";
 import { BullMqJobQueue } from "@hrms/core";
+import { assertCatalogOpen, CatalogGateError, gateError } from "../catalog-gate.js";
 
 export const payrollRouter = Router();
 
@@ -36,7 +39,7 @@ payrollRouter.post("/structures", requireAuth, requireRoles("HR", "ADMIN"), asyn
   }
   const { map } = await loadActiveMap(catalogPool);
   const shard = resolveShard(employeeId, map);
-  const pool = shardPools[shard];
+  const pool = poolFor(shard);
   if (!pool) {
     res.status(500).json(errorEnvelope("ROUTING_ERROR", "No shard owns this record"));
     return;
@@ -46,13 +49,29 @@ payrollRouter.post("/structures", requireAuth, requireRoles("HR", "ADMIN"), asyn
     res.status(404).json(errorEnvelope("NOT_FOUND", "Employee not found"));
     return;
   }
+  let eventId: string;
   try {
-    await withFencedWrite(pool, async (c) => {
+    eventId = nextEventId();
+  } catch (e) {
+    if (e instanceof LeaseExpiredError) {
+      res.status(503).json(errorEnvelope("ID_LEASE_UNAVAILABLE", "ID generation is paused. Try again shortly."));
+      return;
+    }
+    throw e;
+  }
+  try {
+    await fencedWrite(pool, async (c) => {
       const bucket = (await c.query("SELECT bucket_id FROM employees WHERE employee_id = $1", [employeeId])).rows[0].bucket_id as number;
       await c.query(
         "INSERT INTO salary_structures (employee_id, bucket_id, basic_paise, allowances_paise, other_deductions_paise, pf_pct, tax_pct, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,now()) ON CONFLICT (employee_id) DO UPDATE SET basic_paise = EXCLUDED.basic_paise, allowances_paise = EXCLUDED.allowances_paise, other_deductions_paise = EXCLUDED.other_deductions_paise, pf_pct = EXCLUDED.pf_pct, tax_pct = EXCLUDED.tax_pct, updated_at = now()",
         [employeeId, bucket, basic, allow, other, pf, tax]
       );
+      await c.query("INSERT INTO outbox_events (event_id, employee_id, bucket_id, type, payload, version) VALUES ($1,$2,$3,'AUDIT',$4,1)", [
+        `${eventId}-audit`,
+        employeeId,
+        bucket,
+        JSON.stringify({ actor: req.userId ?? "", action: "payroll.structure_updated", resource: `employee:${employeeId}` }),
+      ]);
     });
     res.json({ success: true, data: { employeeId } });
   } catch (e) {
@@ -74,7 +93,7 @@ payrollRouter.get("/structures/:employeeId", requireAuth, async (req: AuthedRequ
     }
   }
   const { map } = await loadActiveMap(catalogPool);
-  const pool = shardPools[resolveShard(req.params.employeeId, map)];
+  const pool = poolFor(resolveShard(req.params.employeeId, map));
   if (!pool) {
     res.status(500).json(errorEnvelope("ROUTING_ERROR", "No shard owns this record"));
     return;
@@ -102,6 +121,7 @@ payrollRouter.post("/batches", requireAuth, requireRoles("HR", "ADMIN"), async (
   const client = await catalogPool.connect();
   try {
     await client.query("BEGIN");
+    await assertCatalogOpen(client);
     await client.query("INSERT INTO payroll_batches (batch_id, period, status, created_by) VALUES ($1, $2, 'PENDING', $3)", [batchId, period, req.userId ?? ""]);
     await client.query("INSERT INTO audit_logs (event_id, actor, action, resource, metadata) VALUES ($1, $2, 'payroll.batch_created', $3, $4)", [
       `${batchId}-audit`,
@@ -112,18 +132,34 @@ payrollRouter.post("/batches", requireAuth, requireRoles("HR", "ADMIN"), async (
     await client.query("COMMIT");
   } catch (e) {
     await client.query("ROLLBACK");
+    if (e instanceof CatalogGateError) {
+      gateError(res);
+      return;
+    }
     throw e;
   } finally {
     client.release();
   }
   const queue = new BullMqJobQueue(process.env.REDIS_QUEUE_URL ?? "redis://localhost:6379");
   try {
-    for (const shard of ["shard-1", "shard-2", "shard-3"]) {
+    for (const shard of ACTIVE_SHARDS) {
       await queue.enqueue("payroll-chunk", { batchId, period, shard }, { jobId: `${batchId}-${shard}` });
     }
   } catch (e) {
     console.error(`payroll enqueue failed for ${batchId}:`, (e as Error).message);
-    await catalogPool.query("UPDATE payroll_batches SET status = 'FAILED' WHERE batch_id = $1", [batchId]);
+    const failClient = await catalogPool.connect();
+    try {
+      await failClient.query("BEGIN");
+      await assertCatalogOpen(failClient);
+      await failClient.query("UPDATE payroll_batches SET status = 'FAILED' WHERE batch_id = $1", [batchId]);
+      await failClient.query("COMMIT");
+    } catch (markErr) {
+      await failClient.query("ROLLBACK").catch(() => undefined);
+      if (!(markErr instanceof CatalogGateError)) throw markErr;
+      console.error(`payroll batch ${batchId}: catalog gated, batch left PENDING after enqueue failure`);
+    } finally {
+      failClient.release();
+    }
     await queue.close().catch(() => undefined);
     res.status(502).json(errorEnvelope("QUEUE_UNAVAILABLE", "Payroll queue is unavailable. The batch was marked failed."));
     return;
@@ -147,15 +183,19 @@ payrollRouter.get("/batches/:id", requireAuth, requireRoles("HR", "ADMIN"), asyn
   const owned = await ownedBuckets();
   const period = (b.rows[0] as { period: string }).period;
   const records: unknown[] = [];
-  for (const [shard, pool] of Object.entries(shardPools)) {
-    if (shard === "shard-4") continue;
-    const r = await pool.query(
-      "SELECT pr.*, e.name FROM payroll_records pr JOIN employees e ON e.employee_id = pr.employee_id WHERE pr.bucket_id = ANY($2) AND pr.period = $1 ORDER BY e.name LIMIT 200",
-      [period, owned[shard] ?? []]
-    );
-    records.push(...r.rows);
+  const unavailable: string[] = [];
+  for (const { shard, pool } of ownedShardPools()) {
+    try {
+      const r = await pool.query(
+        "SELECT pr.*, e.name FROM payroll_records pr JOIN employees e ON e.employee_id = pr.employee_id WHERE pr.bucket_id = ANY($2) AND pr.period = $1 ORDER BY e.name LIMIT 200",
+        [period, owned[shard] ?? []]
+      );
+      records.push(...r.rows);
+    } catch {
+      unavailable.push(shard);
+    }
   }
-  res.json({ success: true, data: { batch: b.rows[0], records } });
+  res.json({ success: true, data: { batch: b.rows[0], records }, meta: partialMeta(unavailable) });
 });
 
 payrollRouter.get("/me", requireAuth, async (req: AuthedRequest, res) => {
@@ -180,8 +220,7 @@ payrollRouter.get("/payslips/:id", requireAuth, async (req: AuthedRequest, res) 
   const roles = req.roles ?? [];
   const owned = await ownedBuckets();
   let found: Record<string, unknown> | null = null;
-  for (const [shard, pool] of Object.entries(shardPools)) {
-    if (shard === "shard-4") continue;
+  for (const { shard, pool } of ownedShardPools()) {
     const r = await pool.query(
       "SELECT pr.*, e.name, e.email FROM payroll_records pr JOIN employees e ON e.employee_id = pr.employee_id WHERE pr.record_id = $1 AND pr.bucket_id = ANY($2)",
       [req.params.id, owned[shard] ?? []]

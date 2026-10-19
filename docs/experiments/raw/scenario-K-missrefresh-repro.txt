@@ -1,0 +1,8 @@
+employee: 9b1d6037-1b08-46b9-9e14-ecc9e9303130 (missrefresh1792396239563@hrms.local)
+--- IMMEDIATE first action (no wait): POST /api/v1/leave/requests ---
+{"success":true,"data":{"request_id":"105573322003066880","employee_id":"9b1d6037-1b08-46b9-9e14-ecc9e9303130","bucket_id":171,"leave_type":"CASUAL","start_date":"2026-12-14T18:30:00.000Z","end_date":"2026-12-15T18:30:00.000Z","workdays":2,"reason":"miss-refresh repro","status":"PENDING_HR","version":1,"decided_by":"","decided_at":null,"created_at":"2026-10-19T07:50:41.425Z"}}
+HTTP 201 after 0.057333s
+wall time from dispatcher drain to leave response: 0.216 s
+--- second immediate action: POST /api/v1/attendance/check-in ---
+{"success":true,"data":{"attendance_id":"105573323466878976","check_in":"2026-10-19T07:50:41.772Z","check_out":null,"status":"LATE","duplicate":false}}
+HTTP 201 after 0.081074s
