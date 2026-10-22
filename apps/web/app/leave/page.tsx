@@ -2,8 +2,11 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { AppShell } from "../../components/app-shell";
+import { Alert, ErrorState } from "../../components/feedback";
 import { Card, SkeletonRows, StatusPill } from "../../components/ui";
-import { authed, fmtDay } from "../../lib/hr";
+import { toUserMessage, type UserError } from "../../lib/errors";
+import { fmtDay } from "../../lib/format";
+import { authed } from "../../lib/hr";
 
 interface Balance {
   leave_type: string;
@@ -24,9 +27,12 @@ export default function LeavePage() {
   const [balances, setBalances] = useState<Balance[]>([]);
   const [rows, setRows] = useState<Req[]>([]);
   const [state, setState] = useState<"loading" | "error" | "ready">("loading");
-  const [error, setError] = useState("");
+  const [error, setError] = useState<UserError | null>(null);
+  const [cancelError, setCancelError] = useState<UserError | null>(null);
 
   async function load() {
+    setState("loading");
+    setError(null);
     try {
       const [b, r] = await Promise.all([
         authed<Balance[]>("/api/v1/leave/balances"),
@@ -36,41 +42,50 @@ export default function LeavePage() {
       setRows(r);
       setState("ready");
     } catch (err) {
-      setError((err as Error).message);
+      setError(toUserMessage(err, "We couldn't load your leave"));
       setState("error");
     }
   }
 
   useEffect(() => {
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function cancel(id: string) {
-    setError("");
+    setCancelError(null);
     try {
       await authed(`/api/v1/leave/requests/${id}/cancel`, undefined, { method: "POST" });
       await load();
     } catch (err) {
-      setError((err as Error).message);
+      setCancelError(toUserMessage(err, "We couldn't cancel this request"));
     }
   }
 
   return (
     <AppShell title="Leave">
       <div className="mb-5 flex justify-end">
-        <Link href="/leave/apply" className="inline-flex h-11 items-center rounded-full bg-rausch px-6 text-sm font-semibold text-white transition hover:bg-rausch-dark active:scale-[0.98]">
+        <Link href="/leave/apply" className="inline-flex h-11 items-center rounded-full bg-primary px-6 text-sm font-semibold text-white transition hover:bg-primary-hover active:scale-[0.98]">
           Apply for leave
         </Link>
       </div>
       {state === "loading" && <SkeletonRows n={4} />}
-      {state === "error" && (
-        <Card className="p-8 text-center">
-          <p className="font-semibold text-hof">Could not load leave</p>
-          <p className="mt-1 text-sm text-foggy">{error}</p>
-        </Card>
+      {state === "error" && error && (
+        <ErrorState
+          title={error.title}
+          body={error.body}
+          actionLabel={error.actionLabel}
+          actionHref={error.action === "signin" ? "/login" : error.action === "back" ? "/dashboard" : undefined}
+          onAction={error.action === "signin" || error.action === "back" ? undefined : () => void load()}
+        />
       )}
       {state === "ready" && (
         <div className="grid max-w-3xl gap-6">
+          {cancelError && (
+            <Alert tone="danger" title={cancelError.title}>
+              {cancelError.body}
+            </Alert>
+          )}
           <div className="grid gap-4 sm:grid-cols-3">
             {balances.map((b) => (
               <Card key={b.leave_type} className="p-5">
@@ -84,11 +99,6 @@ export default function LeavePage() {
               </Card>
             )}
           </div>
-          {error && (
-            <p role="alert" className="text-sm font-medium text-rausch-dark">
-              {error}
-            </p>
-          )}
           <Card className="divide-y divide-line-soft">
             <h2 className="px-5 pt-5 text-lg font-bold text-hof">My requests</h2>
             {rows.length === 0 && <p className="px-5 py-6 text-sm text-foggy">No requests yet.</p>}

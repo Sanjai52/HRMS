@@ -44,16 +44,19 @@ export function JobsSearch() {
   return (
     <div className="relative mt-6 max-w-md">
       <input
+        name="q"
         value={q}
         onChange={(e) => setQ(e.target.value)}
         onFocus={() => suggestions.length > 0 && setShowSuggest(true)}
         onBlur={() => setTimeout(() => setShowSuggest(false), 150)}
         placeholder="Search open roles…"
         aria-label="Search open roles"
+        autoComplete="off"
+        spellCheck={false}
         role="combobox"
         aria-expanded={showSuggest && suggestions.length > 0}
         aria-controls="jobs-suggestions"
-        className="h-11 w-full rounded-full border border-line bg-white px-5 text-sm text-hof outline-none focus:border-hof"
+        className="h-11 w-full rounded-full border border-line bg-white px-5 text-sm text-hof outline-none focus:border-hof focus-visible:ring-2 focus-visible:ring-emerald-600/30"
       />
       {showSuggest && suggestions.length > 0 && (
         <ul

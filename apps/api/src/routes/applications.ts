@@ -41,6 +41,18 @@ async function routeApplication(applicationId: string): Promise<{ pool: ShardPoo
   return { pool: route.pool, bucket: route.bucket, candidateId, jobId: (idx.rows[0] as { job_id: string }).job_id };
 }
 
+/** One catalog query for all roles on a page; no per-row lookups. */
+async function jobTitleMap(jobIds: string[]): Promise<Map<string, string>> {
+  const ids = [...new Set(jobIds.filter(Boolean))];
+  const titles = new Map<string, string>();
+  if (ids.length === 0) return titles;
+  const jobs = await catalogPool.query("SELECT job_id, title FROM jobs WHERE job_id = ANY($1::text[])", [ids]);
+  for (const job of jobs.rows as Array<{ job_id: string; title: string }>) {
+    titles.set(job.job_id, job.title);
+  }
+  return titles;
+}
+
 applicationsRouter.post(
   "/jobs/:jobId/applications",
   publicApplyLimit,
@@ -235,7 +247,12 @@ applicationsRouter.get("/candidates/:id", requireAuth, requireRoles("HR", "ADMIN
     return;
   }
   const apps = await route.pool.query("SELECT application_id, job_id, stage, version, applied_at FROM applications WHERE candidate_id = $1 ORDER BY applied_at DESC", [req.params.id]);
-  res.json({ success: true, data: { candidate: c.rows[0], applications: apps.rows } });
+  const titles = await jobTitleMap((apps.rows as Array<{ job_id: string }>).map((a) => a.job_id));
+  const applications = (apps.rows as Array<{ job_id: string }>).map((a) => ({
+    ...a,
+    job_title: titles.get(a.job_id) ?? null,
+  }));
+  res.json({ success: true, data: { candidate: c.rows[0], applications } });
 });
 
 applicationsRouter.get("/applications", requireAuth, requireRoles("HR", "ADMIN"), async (req, res) => {
@@ -251,7 +268,7 @@ applicationsRouter.get("/applications", requireAuth, requireRoles("HR", "ADMIN")
   for (const { shard, pool } of ownedShardPools()) {
     try {
       const r = await pool.query(
-        "SELECT a.*, c.name AS candidate_name FROM applications a JOIN candidates c ON c.candidate_id = a.candidate_id WHERE a.candidate_bucket_id = ANY($3) AND ($1::text IS NULL OR a.job_id = $1) AND ($2::text IS NULL OR a.stage = $2) ORDER BY a.applied_at DESC LIMIT 50",
+        "SELECT a.*, c.name AS candidate_name, c.email AS candidate_email FROM applications a JOIN candidates c ON c.candidate_id = a.candidate_id WHERE a.candidate_bucket_id = ANY($3) AND ($1::text IS NULL OR a.job_id = $1) AND ($2::text IS NULL OR a.stage = $2) ORDER BY a.applied_at DESC LIMIT 50",
         [jobId, stage, owned[shard] ?? []]
       );
       out.push(...r.rows);
@@ -259,7 +276,12 @@ applicationsRouter.get("/applications", requireAuth, requireRoles("HR", "ADMIN")
       unavailable.push(shard);
     }
   }
-  res.json({ success: true, data: out, meta: partialMeta(unavailable) });
+  const titles = await jobTitleMap((out as Array<{ job_id: string }>).map((r) => r.job_id));
+  const applications = (out as Array<{ job_id: string }>).map((row) => ({
+    ...row,
+    job_title: titles.get(row.job_id) ?? null,
+  }));
+  res.json({ success: true, data: applications, meta: partialMeta(unavailable) });
 });
 
 applicationsRouter.get("/applications/:id", requireAuth, requireRoles("HR", "ADMIN"), async (req, res) => {

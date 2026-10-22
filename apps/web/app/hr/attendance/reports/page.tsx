@@ -1,7 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
 import { AppShell } from "../../../../components/app-shell";
+import { Alert, ErrorState } from "../../../../components/feedback";
 import { Button, Card, Field, SkeletonRows, TextInput } from "../../../../components/ui";
+import { toUserMessage, type UserError } from "../../../../lib/errors";
+import { fmtDay } from "../../../../lib/format";
 import { authedMeta } from "../../../../lib/hr";
 
 interface Counts {
@@ -43,20 +46,23 @@ export default function AttendanceReportsPage() {
   const [department, setDepartment] = useState("");
   const [depts, setDepts] = useState<string[]>([]);
   const [report, setReport] = useState<Report | null>(null);
-  const [partial, setPartial] = useState<string[]>([]);
+  const [partial, setPartial] = useState(false);
   const [state, setState] = useState<"loading" | "error" | "ready">("loading");
+  const [error, setError] = useState<UserError | null>(null);
 
   async function load(nextFrom = from, nextTo = to, nextDept = department) {
     setState("loading");
+    setError(null);
     try {
       const qs = new URLSearchParams({ from: nextFrom, to: nextTo });
       if (nextDept) qs.set("department", nextDept);
       const body = await authedMeta<Report>(`/api/v1/attendance/reports?${qs.toString()}`);
       setReport(body.data);
-      setPartial(body.meta?.partial ? body.meta.unavailable ?? [] : []);
+      setPartial(body.meta?.partial === true);
       setDepts((prev) => [...new Set([...prev, ...body.data.departments.map((d) => d.department)])].filter((d) => d !== "").sort((a, b) => a.localeCompare(b)));
       setState("ready");
-    } catch {
+    } catch (err) {
+      setError(toUserMessage(err, "We couldn't load the attendance report"));
       setState("error");
     }
   }
@@ -104,21 +110,25 @@ export default function AttendanceReportsPage() {
         </Button>
       </form>
 
-      {partial.length > 0 && (
-        <p role="status" className="mb-4 rounded-card border border-arches/40 bg-arches/10 px-4 py-2 text-sm font-medium text-hof">
-          Partial results — unavailable: {partial.join(", ")}. Healthy records are complete.
-        </p>
+      {partial && (
+        <Alert
+          tone="warning"
+          className="mb-4"
+          action={{ label: "Try again", onClick: () => void load() }}
+        >
+          Some data couldn&apos;t be loaded. The rest of the report is shown.
+        </Alert>
       )}
 
       {state === "loading" && <SkeletonRows n={5} />}
-      {state === "error" && (
-        <Card className="p-8 text-center">
-          <p className="font-semibold text-hof">Restricted area</p>
-          <p className="mt-1 text-sm text-foggy">HR access required. Sign in with an HR account to view reports.</p>
-          <Button variant="quiet" onClick={() => load()} className="mt-4 h-10 px-5 text-sm">
-            Try again
-          </Button>
-        </Card>
+      {state === "error" && error && (
+        <ErrorState
+          title={error.title}
+          body={error.body}
+          actionLabel={error.actionLabel}
+          actionHref={error.action === "signin" ? "/login" : error.action === "back" ? "/dashboard" : undefined}
+          onAction={error.action === "signin" || error.action === "back" ? undefined : () => void load()}
+        />
       )}
       {state === "ready" && report && (
         <div className="grid max-w-5xl gap-6">
@@ -142,7 +152,7 @@ export default function AttendanceReportsPage() {
             <div className="flex flex-wrap items-baseline justify-between gap-2 px-5 pt-5">
               <h2 className="text-lg font-semibold text-hof">Daily totals</h2>
               <p className="text-[13px] tabular-nums text-foggy">
-                {report.from} → {report.to} · {report.department ?? "All departments"}
+                {fmtDay(report.from)} → {fmtDay(report.to)} · {report.department ?? "All departments"}
               </p>
             </div>
             {activeDays.length === 0 && <p className="px-5 py-4 text-sm text-foggy">No records in this range.</p>}
@@ -160,7 +170,7 @@ export default function AttendanceReportsPage() {
                 <tbody className="divide-y divide-line-soft">
                   {activeDays.map((d) => (
                     <tr key={d.workday}>
-                      <td className="px-5 py-2.5 font-medium text-hof">{d.workday}</td>
+                      <td className="px-5 py-2.5 font-medium text-hof">{fmtDay(d.workday)}</td>
                       <td className="px-5 py-2.5 text-right tabular-nums text-hof">{d.present}</td>
                       <td className="px-5 py-2.5 text-right tabular-nums text-hof">{d.late}</td>
                       <td className="px-5 py-2.5 text-right tabular-nums text-hof">{d.absent}</td>

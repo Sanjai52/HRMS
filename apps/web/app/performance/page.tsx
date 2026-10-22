@@ -1,8 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { AppShell } from "../../components/app-shell";
+import { ErrorState } from "../../components/feedback";
 import { Card, SkeletonRows } from "../../components/ui";
+import { toUserMessage, type UserError } from "../../lib/errors";
 import { authed } from "../../lib/hr";
 
 interface Goal {
@@ -26,27 +27,41 @@ export default function MyPerformancePage() {
   const [goals, setGoals] = useState<Goal[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [state, setState] = useState<"loading" | "error" | "ready">("loading");
+  const [error, setError] = useState<UserError | null>(null);
+
+  async function load() {
+    setState("loading");
+    setError(null);
+    try {
+      const [g, r] = await Promise.all([
+        authed<Goal[]>("/api/v1/performance/goals"),
+        authed<Review[]>("/api/v1/performance/reviews/me"),
+      ]);
+      setGoals(g);
+      setReviews(r);
+      setState("ready");
+    } catch (err) {
+      setError(toUserMessage(err, "We couldn't load your performance"));
+      setState("error");
+    }
+  }
 
   useEffect(() => {
-    Promise.all([authed<Goal[]>("/api/v1/performance/goals"), authed<Review[]>("/api/v1/performance/reviews/me")])
-      .then(([g, r]) => {
-        setGoals(g);
-        setReviews(r);
-        setState("ready");
-      })
-      .catch(() => setState("error"));
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
     <AppShell title="My performance">
       {state === "loading" && <SkeletonRows n={4} />}
-      {state === "error" && (
-        <Card className="p-8 text-center">
-          <p className="text-balance text-[15px] font-semibold text-hof">Sign in to see your performance</p>
-          <Link href="/login" className="mt-4 inline-block rounded-full px-2 py-1 text-sm font-semibold text-hof outline-none transition duration-200 underline underline-offset-4 focus-visible:ring-2 focus-visible:ring-hof/40 active:scale-[0.98]">
-            Go to login
-          </Link>
-        </Card>
+      {state === "error" && error && (
+        <ErrorState
+          title={error.title}
+          body={error.body}
+          actionLabel={error.actionLabel}
+          actionHref={error.action === "signin" ? "/login" : error.action === "back" ? "/dashboard" : undefined}
+          onAction={error.action === "signin" || error.action === "back" ? undefined : () => void load()}
+        />
       )}
       {state === "ready" && (
         <div className="grid max-w-3xl gap-6">
@@ -62,7 +77,7 @@ export default function MyPerformancePage() {
                   </div>
                   {g.target && <p className="text-sm text-foggy">{g.target}</p>}
                   <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-pearl" role="progressbar" aria-valuenow={g.progress} aria-valuemin={0} aria-valuemax={100} aria-label={`${g.title} progress`}>
-                    <div className="h-full rounded-full bg-rausch transition-[width] duration-200" style={{ width: `${g.progress}%` }} />
+                    <div className="h-full rounded-full bg-primary transition-[width] duration-200" style={{ width: `${g.progress}%` }} />
                   </div>
                 </li>
               ))}

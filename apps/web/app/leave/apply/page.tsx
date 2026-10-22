@@ -2,7 +2,9 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "../../../components/app-shell";
+import { Alert } from "../../../components/feedback";
 import { Button, Card, Field, TextInput } from "../../../components/ui";
+import { toUserMessage, type UserError } from "../../../lib/errors";
 import { authed } from "../../../lib/hr";
 
 export default function ApplyLeavePage() {
@@ -11,12 +13,12 @@ export default function ApplyLeavePage() {
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [reason, setReason] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useState<UserError | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    setError("");
+    setError(null);
     setBusy(true);
     try {
       await authed("/api/v1/leave/requests", undefined, {
@@ -25,7 +27,7 @@ export default function ApplyLeavePage() {
       });
       router.push("/leave");
     } catch (err) {
-      setError((err as Error).message);
+      setError(toUserMessage(err, "We couldn't submit your request"));
     } finally {
       setBusy(false);
     }
@@ -58,9 +60,11 @@ export default function ApplyLeavePage() {
           </div>
         </form>
         {error && (
-          <p role="alert" className="mt-3 text-sm font-medium text-rausch-dark">
-            {error}
-          </p>
+          <div className="mt-3">
+            <Alert tone="danger" title={error.title}>
+              {error.body}
+            </Alert>
+          </div>
         )}
         <p className="mt-3 text-[13px] text-foggy">Weekends and public holidays are not counted. Requests stay within one year.</p>
       </Card>

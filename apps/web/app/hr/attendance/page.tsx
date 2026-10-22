@@ -2,8 +2,11 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { AppShell } from "../../../components/app-shell";
-import { Button, Card, Field, SkeletonRows, TextInput } from "../../../components/ui";
-import { authed, fmtTime } from "../../../lib/hr";
+import { Alert, ErrorState } from "../../../components/feedback";
+import { Button, Card, Field, SkeletonRows, StatusPill, TextInput } from "../../../components/ui";
+import { toUserMessage, type UserError } from "../../../lib/errors";
+import { fmtDay, fmtTime } from "../../../lib/format";
+import { authed, authedMeta } from "../../../lib/hr";
 
 interface Row {
   employee_id: string;
@@ -18,36 +21,40 @@ interface Row {
 const STATUSES = ["PRESENT", "LATE", "ABSENT", "HALF_DAY"] as const;
 
 function toTimeInput(iso: string | null): string {
-  if (!iso) return "";
-  return new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
+  const value = fmtTime(iso);
+  return value === "—" ? "" : value;
+}
+
+function isoToday(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
 export default function HrAttendancePage() {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = isoToday();
   const [date, setDate] = useState(today);
   const [shownDate, setShownDate] = useState(today);
   const [rows, setRows] = useState<Row[]>([]);
-  const [partial, setPartial] = useState<string[]>([]);
+  const [partial, setPartial] = useState(false);
   const [state, setState] = useState<"loading" | "error" | "ready">("loading");
+  const [loadError, setLoadError] = useState<UserError | null>(null);
   const [editing, setEditing] = useState<Row | null>(null);
   const [form, setForm] = useState({ status: "PRESENT", checkIn: "", checkOut: "", reason: "" });
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  const [actionError, setActionError] = useState<UserError | null>(null);
   const [notice, setNotice] = useState("");
 
   async function load(d: string) {
     setState("loading");
+    setLoadError(null);
     try {
-      const base = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:4000";
-      const token = sessionStorage.getItem("hrms_token");
-      const res = await fetch(`${base}/api/v1/attendance/day?date=${d}`, { headers: { authorization: `Bearer ${token}` } });
-      if (!res.ok) throw new Error("Load failed");
-      const body = (await res.json()) as { data: Row[]; meta: { partial: boolean; unavailable?: string[] } };
+      const body = await authedMeta<Row[]>(`/api/v1/attendance/day?date=${d}`);
       setRows(body.data);
       setShownDate(d);
-      setPartial(body.meta.partial ? body.meta.unavailable ?? [] : []);
+      setPartial(body.meta?.partial === true);
       setState("ready");
-    } catch {
+    } catch (err) {
+      setLoadError(toUserMessage(err, "We couldn't load attendance"));
       setState("error");
     }
   }
@@ -58,7 +65,7 @@ export default function HrAttendancePage() {
   }, []);
 
   function openCorrection(row: Row) {
-    setError("");
+    setActionError(null);
     setNotice("");
     setForm({ status: row.status, checkIn: toTimeInput(row.check_in), checkOut: toTimeInput(row.check_out), reason: "" });
     setEditing(row);
@@ -67,7 +74,7 @@ export default function HrAttendancePage() {
   async function saveCorrection() {
     if (!editing) return;
     setSaving(true);
-    setError("");
+    setActionError(null);
     try {
       await authed("/api/v1/attendance/corrections", undefined, {
         method: "POST",
@@ -80,11 +87,11 @@ export default function HrAttendancePage() {
           ...(form.checkOut ? { checkOut: form.checkOut } : {}),
         }),
       });
-      setNotice(`Correction saved for ${editing.name} on ${shownDate}.`);
+      setNotice(`Correction saved for ${editing.name?.trim() || "the employee"} on ${fmtDay(shownDate)}.`);
       setEditing(null);
       await load(shownDate);
     } catch (err) {
-      setError((err as Error).message);
+      setActionError(toUserMessage(err, "We couldn't save this correction"));
     } finally {
       setSaving(false);
     }
@@ -105,25 +112,33 @@ export default function HrAttendancePage() {
             Show
           </button>
         </form>
-        <Link href="/hr/attendance/reports" className="ml-auto text-sm font-semibold text-rausch-dark hover:underline">
+        <Link href="/hr/attendance/reports" className="ml-auto text-sm font-semibold text-primary-ink hover:underline">
           Attendance reports →
         </Link>
       </div>
-      {partial.length > 0 && (
-        <p role="status" className="mb-3 rounded-card border border-arches/40 bg-arches/10 px-4 py-2 text-sm font-medium text-hof">
-          Partial results — unavailable: {partial.join(", ")}. Healthy records are complete.
-        </p>
+      {partial && (
+        <Alert
+          tone="warning"
+          className="mb-3"
+          action={{ label: "Try again", onClick: () => void load(shownDate) }}
+        >
+          Some records are temporarily unavailable. This list may be incomplete.
+        </Alert>
       )}
       {notice && (
-        <div role="status" className="mb-3 rounded-card border border-babu/30 bg-babu/10 px-4 py-2 text-sm font-medium text-babu">
+        <Alert tone="success" className="mb-3">
           {notice}
-        </div>
+        </Alert>
       )}
       {state === "loading" && <SkeletonRows n={5} />}
-      {state === "error" && (
-        <Card className="p-8 text-center">
-          <p className="font-semibold text-hof">Could not load attendance</p>
-        </Card>
+      {state === "error" && loadError && (
+        <ErrorState
+          title={loadError.title}
+          body={loadError.body}
+          actionLabel={loadError.actionLabel}
+          actionHref={loadError.action === "signin" ? "/login" : loadError.action === "back" ? "/dashboard" : undefined}
+          onAction={loadError.action === "signin" || loadError.action === "back" ? undefined : () => void load(date)}
+        />
       )}
       {state === "ready" && (
         <Card className="divide-y divide-line-soft">
@@ -131,11 +146,11 @@ export default function HrAttendancePage() {
           {rows.map((r) => (
             <div key={r.employee_id} className="flex items-center gap-4 px-5 py-3.5">
               <div className="min-w-0 flex-1">
-                <p className="truncate text-[15px] font-semibold text-hof">{r.name}</p>
+                <p className="truncate text-[15px] font-semibold text-hof">{r.name?.trim() || "Employee"}</p>
                 <p className="truncate text-sm text-foggy">{r.department}</p>
               </div>
               <span className="text-sm text-foggy">{fmtTime(r.check_in)} – {fmtTime(r.check_out)}</span>
-              <span className="rounded-full bg-pearl px-2.5 py-1 text-xs font-semibold text-hof">{r.status}</span>
+              <StatusPill status={r.status} />
               <button
                 type="button"
                 onClick={() => openCorrection(r)}
@@ -153,7 +168,7 @@ export default function HrAttendancePage() {
           <Card className="w-full max-w-md p-6">
             <h2 className="text-lg font-semibold text-hof">Correct attendance</h2>
             <p className="mt-1 text-sm text-foggy">
-              {editing.name} · {shownDate}
+              {editing.name?.trim() || "Employee"} · {fmtDay(shownDate)}
               {editing.department ? ` · ${editing.department}` : ""}
             </p>
             <div className="mt-4 grid gap-4">
@@ -166,7 +181,7 @@ export default function HrAttendancePage() {
                 >
                   {STATUSES.map((s) => (
                     <option key={s} value={s}>
-                      {s}
+                      {s.replace(/_/g, " ")}
                     </option>
                   ))}
                 </select>
@@ -183,10 +198,10 @@ export default function HrAttendancePage() {
                 <TextInput aria-label="Reason" placeholder="Why is this record being corrected?" value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} />
               </Field>
             </div>
-            {error && (
-              <div role="alert" className="mt-3 rounded-card border border-rausch/30 bg-rausch/10 px-4 py-2 text-sm font-medium text-rausch-dark">
-                {error}
-              </div>
+            {actionError && (
+              <Alert tone="danger" title={actionError.title} className="mt-3">
+                {actionError.body}
+              </Alert>
             )}
             <div className="mt-5 flex justify-end gap-2">
               <Button variant="quiet" onClick={() => setEditing(null)} disabled={saving} className="h-11 px-5 text-sm">

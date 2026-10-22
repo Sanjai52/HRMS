@@ -1,5 +1,12 @@
 import type { ReactNode } from "react";
+import { DM_Sans } from "next/font/google";
 import "./globals.css";
+
+const dmSans = DM_Sans({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-dm-sans",
+});
 
 export const metadata = {
   title: "HRMS — People operations, minus the paperwork",
@@ -8,8 +15,8 @@ export const metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
-      <body className="bg-white text-hof antialiased">{children}</body>
+    <html lang="en" className={dmSans.variable}>
+      <body className="bg-canvas text-ink antialiased">{children}</body>
     </html>
   );
 }

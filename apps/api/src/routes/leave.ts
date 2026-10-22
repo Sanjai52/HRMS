@@ -175,7 +175,7 @@ leaveRouter.get("/requests", requireAuth, async (req: AuthedRequest, res) => {
       } else if (roles.includes("MANAGER") && !roles.includes("HR") && !roles.includes("ADMIN")) {
         const me = await selfEmployeeId(req);
         const r = await pool.query(
-          "SELECT lr.* FROM leave_requests lr JOIN employees e ON e.employee_id = lr.employee_id WHERE e.manager_id = $1 AND lr.bucket_id = ANY($3) AND ($2::text IS NULL OR lr.status = $2) ORDER BY lr.created_at DESC LIMIT 50",
+          "SELECT lr.*, e.name AS requester_name FROM leave_requests lr JOIN employees e ON e.employee_id = lr.employee_id WHERE e.manager_id = $1 AND lr.bucket_id = ANY($3) AND ($2::text IS NULL OR lr.status = $2) ORDER BY lr.created_at DESC LIMIT 50",
           [me, status, owned[shard] ?? []]
         );
         out.push(...r.rows);
