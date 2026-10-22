@@ -4,7 +4,7 @@ node_modules/
 out/
 dist/
 *.tsbuildinfo
-
+.playwright-mcp/
 # env
 .env
 .env.local
