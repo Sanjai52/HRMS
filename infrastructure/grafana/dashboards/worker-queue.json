@@ -10,7 +10,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "worker_jobs_processed_total",
+          "expr": "sum(worker_jobs_processed_total)",
           "format": "time_series",
           "interval": ""
         }
@@ -23,7 +23,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "worker_jobs_failed_total",
+          "expr": "sum(worker_jobs_failed_total) or vector(0)",
           "format": "time_series",
           "interval": ""
         }
@@ -36,7 +36,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "queue_waiting{name=\"hrms\"}",
+          "expr": "sum(queue_waiting{name=\"hrms\"})",
           "format": "time_series",
           "interval": ""
         }
@@ -49,7 +49,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "queue_active{name=\"hrms\"}",
+          "expr": "sum(queue_active{name=\"hrms\"})",
           "format": "time_series",
           "interval": ""
         }
@@ -62,7 +62,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "histogram_quantile(0.5, sum(rate(worker_job_duration_seconds_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(worker_job_duration_seconds_bucket[5m])))",
           "format": "time_series",
           "interval": ""
         }

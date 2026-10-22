@@ -10,7 +10,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "hrms_http_requests_total",
+          "expr": "sum(hrms_http_requests_total)",
           "format": "time_series",
           "interval": ""
         }
@@ -23,7 +23,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(hrms_http_request_seconds_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(hrms_http_request_seconds_bucket[5m])))",
           "format": "stat",
           "interval": ""
         }
@@ -36,7 +36,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "rate(hrms_http_requests_total{status=~\"5..\"}[1m])",
+          "expr": "sum(rate(hrms_http_requests_total{status=~\"5..\"}[5m])) or vector(0)",
           "format": "time_series",
           "interval": ""
         }
@@ -45,11 +45,11 @@
     },
     {
       "type": "stat",
-      "title": "Pool-level avg latency (ms)",
+      "title": "HTTP average latency (ms)",
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {
-          "expr": "avg(shard_pool_latency_seconds_avg)",
+          "expr": "(sum(rate(hrms_http_request_seconds_sum[5m])) / sum(rate(hrms_http_request_seconds_count[5m]))) * 1000",
           "format": "time_series",
           "interval": ""
         }
