@@ -1,9 +1,11 @@
 "use client";
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { AppShell } from "../../components/app-shell";
-import { Button, Card, SkeletonRows } from "../../components/ui";
-import { authed, fmtTime } from "../../lib/hr";
+import { Alert, ErrorState } from "../../components/feedback";
+import { Button, Card, SkeletonRows, StatusPill } from "../../components/ui";
+import { toUserMessage, type UserError } from "../../lib/errors";
+import { fmtDay, fmtTime } from "../../lib/format";
+import { authed } from "../../lib/hr";
 
 interface Day {
   workday: string;
@@ -17,10 +19,13 @@ export default function AttendancePage() {
   const [history, setHistory] = useState<Day[]>([]);
   const [summary, setSummary] = useState({ present: 0, late: 0 });
   const [state, setState] = useState<"loading" | "error" | "ready">("loading");
-  const [error, setError] = useState("");
+  const [error, setError] = useState<UserError | null>(null);
+  const [actionError, setActionError] = useState<UserError | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function load() {
+    setState("loading");
+    setError(null);
     try {
       const data = await authed<{ today: Day | null; history: Day[]; summary: { present: number; late: number } }>("/api/v1/attendance/me");
       setToday(data.today);
@@ -28,23 +33,27 @@ export default function AttendancePage() {
       setSummary(data.summary);
       setState("ready");
     } catch (err) {
-      setError((err as Error).message);
+      setError(toUserMessage(err, "We couldn't load your attendance"));
       setState("error");
     }
   }
 
   useEffect(() => {
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function act(path: string) {
+    const failureTitle = path.endsWith("check-out")
+      ? "We couldn't save your check-out"
+      : "We couldn't save your check-in";
     setBusy(true);
-    setError("");
+    setActionError(null);
     try {
       await authed(path, undefined, { method: "POST" });
       await load();
     } catch (err) {
-      setError((err as Error).message);
+      setActionError(toUserMessage(err, failureTitle));
     } finally {
       setBusy(false);
     }
@@ -56,14 +65,14 @@ export default function AttendancePage() {
   return (
     <AppShell title="Attendance">
       {state === "loading" && <SkeletonRows n={3} />}
-      {state === "error" && (
-        <Card className="p-8 text-center">
-          <p className="font-semibold text-hof">Could not load attendance</p>
-          <p className="mt-1 text-sm text-foggy">{error}</p>
-          <Link href="/login" className="mt-4 inline-block text-sm font-semibold text-hof underline underline-offset-4">
-            Go to login
-          </Link>
-        </Card>
+      {state === "error" && error && (
+        <ErrorState
+          title={error.title}
+          body={error.body}
+          actionLabel={error.actionLabel}
+          actionHref={error.action === "signin" ? "/login" : error.action === "back" ? "/dashboard" : undefined}
+          onAction={error.action === "signin" || error.action === "back" ? undefined : () => void load()}
+        />
       )}
       {state === "ready" && (
         <div className="grid max-w-3xl gap-6">
@@ -85,21 +94,21 @@ export default function AttendancePage() {
               </Button>
             )}
           </Card>
-          {error && (
-            <p role="alert" className="text-sm font-medium text-rausch-dark">
-              {error}
-            </p>
+          {actionError && (
+            <Alert tone="danger" title={actionError.title}>
+              {actionError.body}
+            </Alert>
           )}
           <Card className="divide-y divide-line-soft">
             <h2 className="px-5 pt-5 text-lg font-bold text-hof">This month</h2>
             {history.length === 0 && <p className="px-5 py-6 text-sm text-foggy">No records yet.</p>}
             {history.map((d) => (
               <div key={d.workday} className="flex items-center gap-4 px-5 py-3">
-                <span className="w-28 shrink-0 text-sm font-semibold text-hof">{d.workday}</span>
+                <span className="w-28 shrink-0 text-sm font-semibold text-hof">{fmtDay(d.workday)}</span>
                 <span className="flex-1 text-sm text-foggy">
                   {fmtTime(d.check_in)} – {fmtTime(d.check_out)}
                 </span>
-                <span className="rounded-full bg-pearl px-2.5 py-1 text-xs font-semibold text-hof">{d.status}</span>
+                <StatusPill status={d.status} />
               </div>
             ))}
           </Card>

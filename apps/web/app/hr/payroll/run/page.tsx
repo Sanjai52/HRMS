@@ -2,18 +2,20 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "../../../../components/app-shell";
+import { Alert } from "../../../../components/feedback";
 import { Button, Card, Field, TextInput } from "../../../../components/ui";
+import { toUserMessage, type UserError } from "../../../../lib/errors";
 import { authed } from "../../../../lib/hr";
 
 export default function RunPayrollPage() {
   const router = useRouter();
   const [period, setPeriod] = useState("2026-09");
-  const [error, setError] = useState("");
+  const [error, setError] = useState<UserError | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    setError("");
+    setError(null);
     setBusy(true);
     try {
       const data = await authed<{ batchId: string }>("/api/v1/payroll/batches", undefined, {
@@ -22,7 +24,7 @@ export default function RunPayrollPage() {
       });
       router.push(`/hr/payroll/batches/${data.batchId}`);
     } catch (err) {
-      setError((err as Error).message);
+      setError(toUserMessage(err, "We couldn't start payroll"));
     } finally {
       setBusy(false);
     }
@@ -43,9 +45,9 @@ export default function RunPayrollPage() {
           </Button>
         </form>
         {error && (
-          <p role="alert" className="mt-3 text-sm font-medium text-rausch-dark">
-            {error}
-          </p>
+          <Alert tone="danger" title={error.title} className="mt-3">
+            {error.body}
+          </Alert>
         )}
       </Card>
     </AppShell>

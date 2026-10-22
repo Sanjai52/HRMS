@@ -1,13 +1,17 @@
 "use client";
 import { useEffect, useState } from "react";
 import { AppShell } from "../../../components/app-shell";
+import { ErrorState } from "../../../components/feedback";
 import { Card, SkeletonRows, StatusPill } from "../../../components/ui";
 import { DecisionButtons } from "../../../components/leave-decision";
-import { authed, fmtDay } from "../../../lib/hr";
+import { toUserMessage, type UserError } from "../../../lib/errors";
+import { fmtDay } from "../../../lib/format";
+import { authed } from "../../../lib/hr";
 
 interface Req {
   request_id: string;
   employee_id: string;
+  requester_name?: string | null;
   leave_type: string;
   start_date: string;
   end_date: string;
@@ -16,17 +20,21 @@ interface Req {
   version: number;
 }
 
-function Queue({ title, fetchPath, allowOverride }: { title: string; fetchPath: string; allowOverride?: boolean }) {
+function Queue({ fetchPath, allowOverride }: { fetchPath: string; allowOverride?: boolean }) {
   const [rows, setRows] = useState<Req[]>([]);
   const [state, setState] = useState<"loading" | "error" | "ready">("loading");
+  const [error, setError] = useState<UserError | null>(null);
   const [filter, setFilter] = useState("");
 
   async function load() {
+    setState("loading");
+    setError(null);
     try {
       const data = await authed<Req[]>(fetchPath + (filter ? `?status=${filter}` : ""));
       setRows(data);
       setState("ready");
-    } catch {
+    } catch (err) {
+      setError(toUserMessage(err, "We couldn't load leave requests"));
       setState("error");
     }
   }
@@ -50,10 +58,14 @@ function Queue({ title, fetchPath, allowOverride }: { title: string; fetchPath: 
         ))}
       </div>
       {state === "loading" && <SkeletonRows n={4} />}
-      {state === "error" && (
-        <Card className="p-8 text-center">
-          <p className="font-semibold text-hof">Could not load {title.toLowerCase()}</p>
-        </Card>
+      {state === "error" && error && (
+        <ErrorState
+          title={error.title}
+          body={error.body}
+          actionLabel={error.actionLabel}
+          actionHref={error.action === "signin" ? "/login" : error.action === "back" ? "/dashboard" : undefined}
+          onAction={error.action === "signin" || error.action === "back" ? undefined : () => void load()}
+        />
       )}
       {state === "ready" && (
         <Card className="divide-y divide-line-soft">
@@ -62,8 +74,8 @@ function Queue({ title, fetchPath, allowOverride }: { title: string; fetchPath: 
             <div key={r.request_id} className="grid gap-3 px-5 py-4">
               <div className="flex flex-wrap items-center gap-3">
                 <div className="min-w-0 flex-1">
-                  <p className="text-[15px] font-semibold capitalize text-hof">{r.leave_type.toLowerCase()} · {r.workdays}d</p>
-                  <p className="text-sm text-foggy">{fmtDay(r.start_date)} → {fmtDay(r.end_date)}</p>
+                  <p className="text-[15px] font-semibold text-hof">{r.requester_name?.trim() || "Team member"}</p>
+                  <p className="text-sm capitalize text-foggy">{r.leave_type.toLowerCase()} · {r.workdays}d · {fmtDay(r.start_date)} → {fmtDay(r.end_date)}</p>
                 </div>
                 <StatusPill status={r.status} />
               </div>
@@ -80,7 +92,7 @@ export default function ManagerLeavePage() {
   return (
     <AppShell title="Leave approvals">
       <div className="max-w-3xl">
-        <Queue title="approvals" fetchPath="/api/v1/leave/requests" />
+        <Queue fetchPath="/api/v1/leave/requests" />
       </div>
     </AppShell>
   );

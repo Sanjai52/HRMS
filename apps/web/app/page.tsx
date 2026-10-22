@@ -7,8 +7,8 @@ export default function Landing() {
     <div className="min-h-dvh bg-white">
       <header className="sticky top-0 z-30 border-b border-line-soft bg-white/95 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-7xl items-center gap-6 px-4 md:px-8">
-          <span className="flex items-center gap-2 text-xl font-extrabold tracking-tight text-rausch">
-            <span className="grid h-8 w-8 place-items-center rounded-lg bg-rausch text-base font-black text-white">H</span>
+          <span className="flex items-center gap-2 text-xl font-extrabold tracking-tight text-brand">
+            <span className="grid h-8 w-8 place-items-center rounded-lg bg-brand text-base font-black text-white">H</span>
             HRMS
           </span>
           <nav className="ml-auto flex items-center gap-2">
@@ -50,6 +50,8 @@ export default function Landing() {
             <img
               src="https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=1200&q=70"
               alt="HR team collaborating around a table in a bright office"
+              width={1200}
+              height={900}
               className="aspect-[4/3] w-full object-cover"
               loading="eager"
             />
@@ -63,7 +65,7 @@ export default function Landing() {
             { icon: Wallet, title: "Payroll and hiring", body: "Pay periods, payslips, job postings and a full recruitment pipeline." },
           ].map(({ icon: Icon, title, body }) => (
             <Card key={title} className="p-6">
-              <span className="grid h-11 w-11 place-items-center rounded-card bg-rausch/10 text-rausch">
+              <span className="grid h-11 w-11 place-items-center rounded-card bg-brand/10 text-brand">
                 <Icon size={22} weight="fill" />
               </span>
               <h2 className="mt-4 text-lg font-bold text-hof">{title}</h2>
@@ -81,7 +83,7 @@ export default function Landing() {
               </p>
               <Link
                 href="/login"
-                className="mt-6 inline-flex h-12 items-center rounded-full bg-rausch px-6 text-[15px] font-semibold text-white transition hover:bg-rausch-dark active:scale-[0.98]"
+                className="mt-6 inline-flex h-12 items-center rounded-full bg-primary px-6 text-[15px] font-semibold text-white transition hover:bg-primary-hover active:scale-[0.98]"
               >
                 Sign in to HRMS
               </Link>
@@ -89,6 +91,8 @@ export default function Landing() {
             <img
               src="https://images.unsplash.com/photo-1600880292203-757bb62b4baf?auto=format&fit=crop&w=1000&q=70"
               alt="Two colleagues discussing work in a modern office"
+              width={1000}
+              height={700}
               className="aspect-[10/7] w-full rounded-input object-cover"
               loading="lazy"
             />
@@ -99,8 +103,8 @@ export default function Landing() {
       <footer className="border-t border-line-soft">
         <div className="mx-auto grid max-w-7xl gap-8 px-4 py-10 text-sm md:grid-cols-3 md:px-8">
           <div>
-            <p className="flex items-center gap-2 text-base font-extrabold tracking-tight text-rausch">
-              <span className="grid h-7 w-7 place-items-center rounded-md bg-rausch text-xs font-black text-white">H</span>
+            <p className="flex items-center gap-2 text-base font-extrabold tracking-tight text-brand">
+              <span className="grid h-7 w-7 place-items-center rounded-md bg-brand text-xs font-black text-white">H</span>
               HRMS
             </p>
             <p className="mt-2 max-w-[36ch] leading-relaxed text-foggy">

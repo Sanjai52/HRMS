@@ -1,10 +1,13 @@
 "use client";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ArrowRight, CalendarCheck, Suitcase, Wallet, Bell } from "@phosphor-icons/react";
 import { AppShell } from "../../components/app-shell";
+import { Alert, ErrorState } from "../../components/feedback";
 import { Card, SkeletonRows } from "../../components/ui";
-import { rolesOf } from "../../lib/api";
+import { requestJson, rolesOf } from "../../lib/api";
+import { toUserMessage } from "../../lib/errors";
+import { employeeLabel, fmtMoney, initials, periodLabel } from "../../lib/format";
 
 interface Row {
   employee_id: string;
@@ -27,13 +30,19 @@ interface Payslip {
   net_paise: number;
 }
 
-function initials(name: string): string {
-  return name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase();
+interface MeResponse {
+  name?: string;
 }
 
-function rupees(paise: number): string {
-  return `₹${(paise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
+interface AttendanceToday {
+  today?: { check_out?: string | null; status?: string | null } | null;
 }
+
+interface UnreadResponse {
+  count?: number;
+}
+
+type LoadState = "loading" | "signed_out" | "error" | "ready";
 
 export default function Dashboard() {
   const [rows, setRows] = useState<Row[]>([]);
@@ -43,49 +52,94 @@ export default function Dashboard() {
   const [leaveLeft, setLeaveLeft] = useState<number | null>(null);
   const [payslip, setPayslip] = useState<Payslip | null>(null);
   const [unread, setUnread] = useState<number | null>(null);
-  const [state, setState] = useState<"loading" | "error" | "ready">("loading");
+  const [state, setState] = useState<LoadState>("loading");
+  const [errorBody, setErrorBody] = useState("");
+  const [partial, setPartial] = useState(false);
 
-  useEffect(() => {
+  const load = useCallback(async () => {
+    setState("loading");
+    setPartial(false);
     const token = sessionStorage.getItem("hrms_token");
     if (!token) {
-      setState("error");
+      // No session at all: same session-expired copy as a rejected 401.
+      setState("signed_out");
       return;
     }
-    const base = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:4000";
-    const auth = { authorization: `Bearer ${token}` };
     const myRoles = rolesOf(token);
     setRoles(myRoles);
     const privileged = myRoles.includes("HR") || myRoles.includes("ADMIN") || myRoles.includes("MANAGER");
-    const get = (path: string) =>
-      fetch(`${base}${path}`, { headers: auth })
-        .then((r) => (r.ok ? r.json() : null))
-        .catch(() => null);
-    Promise.all([
-      get("/api/v1/employees/me"),
-      get("/api/v1/attendance/me"),
-      get("/api/v1/leave/balances"),
-      get("/api/v1/payroll/me"),
-      get("/api/v1/notifications/unread-count"),
-      privileged ? get("/api/v1/employees?limit=5") : Promise.resolve(null),
-    ]).then(([me, att, balances, slips, unreadBody, dir]) => {
-      if (me?.data?.name) setName(me.data.name as string);
-      const today = att?.data?.today;
+
+    // The profile is the page gate: without it there is nothing to render.
+    let me: MeResponse;
+    try {
+      me = (await requestJson<MeResponse>("/api/v1/employees/me", undefined, token)).data;
+    } catch (err) {
+      const userError = toUserMessage(err, "We couldn't load your dashboard");
+      if (userError.kind === "auth") {
+        setState("signed_out");
+        return;
+      }
+      setErrorBody(userError.body);
+      setState("error");
+      return;
+    }
+    if (me?.name) setName(me.name);
+
+    // Optional sources: a failure in one must not blank the rest of the page.
+    const [att, balances, slips, unreadBody, dir] = await Promise.allSettled([
+      requestJson<AttendanceToday>("/api/v1/attendance/me", undefined, token),
+      requestJson<Balance[]>("/api/v1/leave/balances", undefined, token),
+      requestJson<Payslip[]>("/api/v1/payroll/me", undefined, token),
+      requestJson<UnreadResponse>("/api/v1/notifications/unread-count", undefined, token),
+      privileged ? requestJson<Row[]>("/api/v1/employees?limit=5", undefined, token) : Promise.resolve(null),
+    ]);
+    let optionalFailed = false;
+
+    if (att.status === "fulfilled") {
+      const today = att.value.data?.today;
       setAttendance(
         today ? (today.check_out ? "Checked out" : today.status === "LATE" ? "Late arrival" : "Checked in") : "Not checked in"
       );
-      const leaveRows = (balances?.data ?? []) as Balance[];
+    } else {
+      optionalFailed = true;
+    }
+
+    if (balances.status === "fulfilled") {
+      const leaveRows = balances.value.data ?? [];
       setLeaveLeft(
         leaveRows.length > 0
           ? leaveRows.reduce((sum, b) => sum + Math.max(0, Number(b.total_days) - Number(b.used_days)), 0)
           : null
       );
-      const slipsRows = (slips?.data ?? []) as Payslip[];
-      setPayslip(slipsRows[0] ?? null);
-      setUnread(typeof unreadBody?.data?.count === "number" ? (unreadBody.data.count as number) : null);
-      if (Array.isArray(dir?.data)) setRows(dir.data as Row[]);
-      setState("ready");
-    });
+    } else {
+      optionalFailed = true;
+    }
+
+    if (slips.status === "fulfilled") {
+      setPayslip(slips.value.data?.[0] ?? null);
+    } else {
+      optionalFailed = true;
+    }
+
+    if (unreadBody.status === "fulfilled") {
+      setUnread(typeof unreadBody.value.data?.count === "number" ? unreadBody.value.data.count : null);
+    } else {
+      optionalFailed = true;
+    }
+
+    if (dir.status === "fulfilled") {
+      if (Array.isArray(dir.value?.data)) setRows(dir.value.data);
+    } else {
+      optionalFailed = true;
+    }
+
+    setPartial(optionalFailed);
+    setState("ready");
   }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   const privileged = roles.includes("HR") || roles.includes("ADMIN") || roles.includes("MANAGER");
   const roleLabel = roles.includes("ADMIN") ? "Admin" : roles.includes("HR") ? "HR" : roles.includes("MANAGER") ? "Manager" : "";
@@ -93,21 +147,33 @@ export default function Dashboard() {
 
   return (
     <AppShell title={greeting}>
-      {state === "error" && (
-        <Card className="p-8 text-center">
-          <p className="font-semibold text-hof">You are signed out</p>
-          <p className="mt-1 text-sm text-foggy">Log in to see your workspace.</p>
-          <Link href="/login" className="mt-4 inline-flex h-11 items-center rounded-full bg-rausch px-6 text-sm font-semibold text-white hover:bg-rausch-dark">
-            Go to login
-          </Link>
-        </Card>
-      )}
       {state === "loading" && <SkeletonRows n={4} />}
+      {state === "signed_out" && (
+        <ErrorState title="Your session has expired" body="Sign in again to continue." actionLabel="Sign in" actionHref="/login" />
+      )}
+      {state === "error" && (
+        <ErrorState
+          title="We couldn't load your dashboard"
+          body={errorBody}
+          actionLabel="Try again"
+          onAction={() => void load()}
+        />
+      )}
       {state === "ready" && (
         <>
+          {partial && (
+            <Alert
+              tone="warning"
+              title="Some dashboard details couldn't be loaded."
+              action={{ label: "Refresh", onClick: () => void load() }}
+              className="mb-4"
+            >
+              The rest of your workspace is shown. Refresh to try again.
+            </Alert>
+          )}
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <Card className="flex items-center gap-4 p-5">
-              <span className="grid h-12 w-12 shrink-0 place-items-center rounded-card bg-babu/10 text-babu">
+              <span className="grid h-12 w-12 shrink-0 place-items-center rounded-card bg-success-soft text-success">
                 <CalendarCheck size={24} weight="fill" />
               </span>
               <div className="min-w-0">
@@ -116,7 +182,7 @@ export default function Dashboard() {
               </div>
             </Card>
             <Card className="flex items-center gap-4 p-5">
-              <span className="grid h-12 w-12 shrink-0 place-items-center rounded-card bg-arches/10 text-arches">
+                <span className="grid h-12 w-12 shrink-0 place-items-center rounded-card bg-warning-soft text-warning">
                 <Suitcase size={24} weight="fill" />
               </span>
               <div className="min-w-0">
@@ -128,13 +194,13 @@ export default function Dashboard() {
             </Card>
             <Link href="/payroll">
               <Card className="flex items-center gap-4 p-5 transition hover:shadow-pop">
-                <span className="grid h-12 w-12 shrink-0 place-items-center rounded-card bg-rausch/10 text-rausch">
+                <span className="grid h-12 w-12 shrink-0 place-items-center rounded-card bg-primary-soft text-primary">
                   <Wallet size={24} weight="fill" />
                 </span>
                 <div className="min-w-0">
                   <p className="text-sm font-medium text-foggy">Latest payslip</p>
                   <p className="truncate text-xl font-extrabold tracking-tight text-hof">
-                    {payslip ? `${rupees(payslip.net_paise)} · ${payslip.period}` : "No payslips yet"}
+                    {payslip ? `${fmtMoney(payslip.net_paise)} · ${periodLabel(payslip.period)}` : "No payslips yet"}
                   </p>
                 </div>
               </Card>
@@ -168,10 +234,10 @@ export default function Dashboard() {
                   {rows.map((r) => (
                     <Link key={r.employee_id} href={`/hr/employees/${r.employee_id}`} className="flex items-center gap-3 px-5 py-3.5 transition hover:bg-pearl/60">
                       <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-hof text-sm font-bold text-white">
-                        {initials(r.name)}
+                        {initials(employeeLabel(r))}
                       </span>
                       <div className="min-w-0">
-                        <p className="truncate text-[15px] font-semibold text-hof">{r.name}</p>
+                        <p className="truncate text-[15px] font-semibold text-hof">{employeeLabel(r)}</p>
                         <p className="truncate text-sm text-foggy">{r.designation} · {r.department}</p>
                       </div>
                     </Link>

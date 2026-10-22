@@ -2,8 +2,11 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { AppShell } from "../../../../components/app-shell";
+import { Alert, ErrorState } from "../../../../components/feedback";
 import { Card, SkeletonRows, TextInput } from "../../../../components/ui";
-import { authed } from "../../../../lib/hr";
+import { toUserMessage, type UserError } from "../../../../lib/errors";
+import { initials } from "../../../../lib/format";
+import { authedMeta } from "../../../../lib/hr";
 
 interface Cand {
   candidate_id: string;
@@ -16,13 +19,20 @@ export default function CandidatesPage() {
   const [q, setQ] = useState("");
   const [rows, setRows] = useState<Cand[]>([]);
   const [state, setState] = useState<"loading" | "error" | "ready">("loading");
+  const [error, setError] = useState<UserError | null>(null);
+  const [partial, setPartial] = useState(false);
 
   async function load(query: string) {
     setState("loading");
+    setError(null);
     try {
-      setRows(await authed<Cand[]>(`/api/v1/recruitment/candidates${query ? `?q=${encodeURIComponent(query)}` : ""}`));
+      const body = await authedMeta<Cand[]>(`/api/v1/recruitment/candidates${query ? `?q=${encodeURIComponent(query)}` : ""}`);
+      setRows(body.data);
+      setPartial(body.meta?.partial === true);
       setState("ready");
-    } catch {
+    } catch (err) {
+      setPartial(false);
+      setError(toUserMessage(err, "We couldn't load candidates"));
       setState("error");
     }
   }
@@ -41,27 +51,41 @@ export default function CandidatesPage() {
         </button>
       </form>
       {state === "loading" && <SkeletonRows n={4} />}
-      {state === "error" && (
-        <Card className="p-8 text-center">
-          <p className="font-semibold text-hof">Could not load candidates</p>
-        </Card>
+      {state === "error" && error && (
+        <ErrorState
+          title={error.title}
+          body={error.body}
+          actionLabel={error.actionLabel}
+          actionHref={error.action === "signin" ? "/login" : error.action === "back" ? "/hr/recruitment" : undefined}
+          onAction={error.action === "signin" || error.action === "back" ? undefined : () => void load(q)}
+        />
       )}
       {state === "ready" && (
-        <Card className="divide-y divide-line-soft">
-          {rows.length === 0 && <p className="px-5 py-6 text-sm text-foggy">No candidates yet. Source them or wait for applications.</p>}
-          {rows.map((c) => (
-            <Link key={c.candidate_id} href={`/hr/recruitment/candidates/${c.candidate_id}`} className="flex items-center gap-4 px-5 py-4 transition hover:bg-pearl/60">
-              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-rausch/10 text-sm font-extrabold text-rausch-dark">
-                {c.name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase()}
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[15px] font-semibold text-hof">{c.name}</p>
-                <p className="truncate text-sm text-foggy">{c.email}</p>
-              </div>
-              <span className="rounded-full bg-pearl px-2.5 py-1 text-xs font-semibold capitalize text-hof">{c.source}</span>
-            </Link>
-          ))}
-        </Card>
+        <div className="grid gap-4">
+          {partial && (
+            <Alert
+              tone="warning"
+              action={{ label: "Try again", onClick: () => void load(q) }}
+            >
+              Some candidates are temporarily unavailable. This list may be incomplete.
+            </Alert>
+          )}
+          <Card className="divide-y divide-line-soft">
+            {rows.length === 0 && !partial && <p className="px-5 py-6 text-sm text-foggy">No candidates yet. Source them or wait for applications.</p>}
+            {rows.map((c) => (
+              <Link key={c.candidate_id} href={`/hr/recruitment/candidates/${c.candidate_id}`} className="flex items-center gap-4 px-5 py-4 transition hover:bg-pearl/60">
+                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-primary-soft text-sm font-extrabold text-primary-ink">
+                  {initials(c.name)}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[15px] font-semibold text-hof">{c.name?.trim() || "Candidate"}</p>
+                  <p className="truncate text-sm text-foggy">{c.email}</p>
+                </div>
+                <span className="rounded-full bg-pearl px-2.5 py-1 text-xs font-semibold capitalize text-hof">{c.source}</span>
+              </Link>
+            ))}
+          </Card>
+        </div>
       )}
     </AppShell>
   );

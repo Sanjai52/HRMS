@@ -1,11 +1,24 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { AppShell } from "../../../components/app-shell";
+import { Alert, ErrorState } from "../../../components/feedback";
 import { Button, Card, SkeletonRows, StatusPill } from "../../../components/ui";
+import { toUserMessage, type UserError } from "../../../lib/errors";
 import { authed, fmtDay } from "../../../lib/hr";
 
 const ROLES = ["EMPLOYEE", "MANAGER", "HR", "ADMIN"] as const;
+
+const ROLE_LABELS: Record<string, string> = {
+  EMPLOYEE: "Employee",
+  MANAGER: "Manager",
+  HR: "HR",
+  ADMIN: "Admin",
+};
+
+function roleLabel(role: string): string {
+  return ROLE_LABELS[role] ?? "Custom role";
+}
 
 interface UserRow {
   user_id: string;
@@ -17,29 +30,60 @@ interface UserRow {
   roles: string[];
 }
 
+interface DirectoryEntry {
+  employee_id: string;
+  name: string;
+}
+
 export default function AdminUsersPage() {
   const [rows, setRows] = useState<UserRow[]>([]);
+  const [names, setNames] = useState<Record<string, string>>({});
   const [total, setTotal] = useState(0);
   const [draft, setDraft] = useState<Record<string, string[]>>({});
   const [state, setState] = useState<"loading" | "error" | "ready">("loading");
-  const [error, setError] = useState("");
+  const [error, setError] = useState<UserError | null>(null);
+  const [actionError, setActionError] = useState<UserError | null>(null);
   const [notice, setNotice] = useState("");
+  const lookupSequence = useRef(0);
+  const mounted = useRef(true);
 
   async function load() {
+    const sequence = ++lookupSequence.current;
     setState("loading");
+    setError(null);
     try {
       const data = await authed<{ users: UserRow[]; total: number }>("/api/v1/admin/users?limit=100");
+      if (!mounted.current || sequence !== lookupSequence.current) return;
       setRows(data.users);
       setTotal(data.total);
       setDraft(Object.fromEntries(data.users.map((u) => [u.user_id, [...u.roles]])));
       setState("ready");
-    } catch {
+
+      // Best-effort name enrichment. The account list is already usable, so a
+      // slow or failed directory lookup must not block or error the page.
+      void authed<DirectoryEntry[]>("/api/v1/employees?limit=50")
+        .then((directory) => {
+          if (!mounted.current || sequence !== lookupSequence.current) return;
+          setNames(Object.fromEntries(directory.map((entry) => [entry.employee_id, entry.name])));
+        })
+        .catch(() => {
+          if (!mounted.current || sequence !== lookupSequence.current) return;
+          setNames({});
+        });
+    } catch (err) {
+      if (!mounted.current || sequence !== lookupSequence.current) return;
+      setError(toUserMessage(err, "We couldn't load user accounts"));
       setState("error");
     }
   }
 
   useEffect(() => {
-    load();
+    mounted.current = true;
+    void load();
+    return () => {
+      mounted.current = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function toggle(userId: string, role: string) {
@@ -51,11 +95,18 @@ export default function AdminUsersPage() {
   }
 
   async function saveRoles(u: UserRow) {
-    setError("");
+    setActionError(null);
     setNotice("");
     const roles = draft[u.user_id] ?? [];
     if (roles.length === 0) {
-      setError("Keep at least one role.");
+      setActionError({
+        kind: "validation",
+        title: "We couldn't update this account",
+        body: "Keep at least one role.",
+        action: "none",
+        actionLabel: "Close",
+        retryable: false,
+      });
       return;
     }
     try {
@@ -63,20 +114,20 @@ export default function AdminUsersPage() {
       setNotice(`Roles updated for ${u.email}.`);
       await load();
     } catch (err) {
-      setError((err as Error).message);
+      setActionError(toUserMessage(err, "We couldn't update this account"));
     }
   }
 
   async function deactivate(u: UserRow) {
     if (!window.confirm(`Deactivate ${u.email}? They are signed out and blocked from logging in.`)) return;
-    setError("");
+    setActionError(null);
     setNotice("");
     try {
       await authed(`/api/v1/admin/users/${u.user_id}/deactivate`, undefined, { method: "POST" });
       setNotice(`${u.email} deactivated.`);
       await load();
     } catch (err) {
-      setError((err as Error).message);
+      setActionError(toUserMessage(err, "We couldn't update this account"));
     }
   }
 
@@ -89,41 +140,42 @@ export default function AdminUsersPage() {
       </div>
 
       {notice && (
-        <div role="status" className="mb-4 rounded-card border border-babu/30 bg-babu/10 px-4 py-3 text-sm font-medium text-babu">
+        <div role="status" className="mb-4 rounded-card border border-success/30 bg-success-soft px-4 py-3 text-sm font-medium text-success">
           {notice}
         </div>
       )}
-      {error && (
-        <div role="alert" className="mb-4 rounded-card border border-rausch/30 bg-rausch/10 px-4 py-3 text-sm font-medium text-rausch-dark">
-          {error}
-        </div>
+      {actionError && (
+        <Alert tone="danger" title={actionError.title} className="mb-4">
+          {actionError.body}
+        </Alert>
       )}
 
       {state === "loading" && <SkeletonRows n={6} />}
-      {state === "error" && (
-        <Card className="p-8 text-center">
-          <p className="font-semibold text-hof">Restricted area</p>
-          <p className="mt-1 text-sm text-foggy">Admin access required.</p>
-          <Button variant="quiet" onClick={load} className="mt-4 h-10 px-5 text-sm">
-            Try again
-          </Button>
-        </Card>
+      {state === "error" && error && (
+        <ErrorState
+          title={error.title}
+          body={error.body}
+          actionLabel={error.actionLabel}
+          actionHref={error.action === "signin" ? "/login" : error.action === "back" ? "/dashboard" : undefined}
+          onAction={error.action === "signin" || error.action === "back" ? undefined : () => void load()}
+        />
       )}
       {state === "ready" && (
         <Card className="divide-y divide-line-soft">
           {rows.map((u) => {
             const selected = draft[u.user_id] ?? [];
             const changed = [...selected].sort().join(",") !== [...u.roles].sort().join(",");
+            const name = u.employee_id ? names[u.employee_id] : undefined;
             return (
               <div key={u.user_id} className="grid gap-3 px-5 py-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,2fr)_auto_auto] lg:items-center">
                 <div className="min-w-0">
-                  <p className="truncate text-[15px] font-semibold text-hof">{u.email}</p>
-                  <p className="mt-0.5 text-xs text-foggy">
-                    Joined {fmtDay(u.created_at)}
+                  <p className="truncate text-[15px] font-semibold text-hof">{name ?? u.email}</p>
+                  <p className="mt-0.5 truncate text-xs text-foggy">
+                    {name ? `${u.email} · ` : ""}Joined {fmtDay(u.created_at)}
                     {u.employee_id && (
                       <>
                         {" · "}
-                        <Link href={`/hr/employees/${u.employee_id}`} className="font-medium text-rausch-dark hover:underline">
+                        <Link href={`/hr/employees/${u.employee_id}`} className="font-medium text-primary-ink hover:underline">
                           Employee record
                         </Link>
                       </>
@@ -137,13 +189,13 @@ export default function AdminUsersPage() {
                         type="checkbox"
                         checked={selected.includes(r)}
                         onChange={() => toggle(u.user_id, r)}
-                        className="h-4 w-4 rounded border-line accent-rausch"
+                        className="h-4 w-4 rounded border-line accent-primary"
                       />
-                      {r}
+                      {roleLabel(r)}
                     </label>
                   ))}
                 </div>
-                <StatusPill status={u.is_active ? "ACTIVE" : "DEACTIVATED"} />
+                <StatusPill status={u.is_active ? "Active" : "Deactivated"} />
                 <div className="flex items-center gap-2">
                   <Button variant="outline" disabled={!changed || selected.length === 0} onClick={() => saveRoles(u)} className="h-10 px-5 text-sm">
                     Save roles

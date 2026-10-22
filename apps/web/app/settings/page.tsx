@@ -1,8 +1,11 @@
 "use client";
 import { useEffect, useState } from "react";
 import { AppShell } from "../../components/app-shell";
+import { Alert, ErrorState } from "../../components/feedback";
 import { Button, Card, Field, TextInput, SkeletonRows } from "../../components/ui";
-import { authed, fmtDay } from "../../lib/hr";
+import { toUserMessage, type UserError } from "../../lib/errors";
+import { fmtDay } from "../../lib/format";
+import { authed } from "../../lib/hr";
 
 interface Lookups {
   departments: string[];
@@ -11,49 +14,113 @@ interface Lookups {
   holidays: Array<{ holiday_date: string; name: string }>;
 }
 
+interface Prefs {
+  email_enabled: boolean;
+  in_app_enabled: boolean;
+}
+
 export default function SettingsPage() {
   const [data, setData] = useState<Lookups | null>(null);
   const [dept, setDept] = useState("");
   const [desig, setDesig] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useState<UserError | null>(null);
   const [state, setState] = useState<"loading" | "error" | "ready">("loading");
-  const [prefs, setPrefs] = useState<{ email_enabled: boolean; in_app_enabled: boolean } | null>(null);
+  const [prefs, setPrefs] = useState<Prefs | null>(null);
+  const [prefsLoading, setPrefsLoading] = useState(true);
+  const [prefsLoadError, setPrefsLoadError] = useState<UserError | null>(null);
   const [prefsNotice, setPrefsNotice] = useState("");
-  const [prefsError, setPrefsError] = useState("");
+  const [prefsSaveError, setPrefsSaveError] = useState<UserError | null>(null);
+  const [deptError, setDeptError] = useState<UserError | null>(null);
+  const [desigError, setDesigError] = useState<UserError | null>(null);
+  const [deptBusy, setDeptBusy] = useState(false);
+  const [desigBusy, setDesigBusy] = useState(false);
 
   async function load() {
+    setError(null);
     try {
       setData(await authed<Lookups>("/api/v1/admin/settings/lookups"));
       setState("ready");
     } catch (err) {
-      setError((err as Error).message);
+      setError(toUserMessage(err, "We couldn't load settings"));
       setState("error");
+    }
+  }
+
+  async function loadPrefs() {
+    setPrefsLoading(true);
+    setPrefsLoadError(null);
+    try {
+      setPrefs(await authed<Prefs>("/api/v1/notifications/prefs"));
+    } catch (err) {
+      setPrefs(null);
+      setPrefsLoadError(toUserMessage(err, "We couldn't load your notification settings"));
+    } finally {
+      setPrefsLoading(false);
     }
   }
 
   useEffect(() => {
     load();
-    authed<{ email_enabled: boolean; in_app_enabled: boolean }>("/api/v1/notifications/prefs")
-      .then(setPrefs)
-      .catch(() => setPrefs({ email_enabled: true, in_app_enabled: true }));
+    loadPrefs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function savePrefs(e: React.FormEvent) {
     e.preventDefault();
     if (!prefs) return;
     setPrefsNotice("");
-    setPrefsError("");
+    setPrefsSaveError(null);
     try {
       await authed("/api/v1/notifications/prefs", undefined, { method: "PUT", body: JSON.stringify(prefs) });
       setPrefsNotice("Notification settings saved.");
     } catch (err) {
-      setPrefsError((err as Error).message);
+      setPrefsSaveError(toUserMessage(err, "We couldn't save your notification settings"));
+    }
+  }
+
+  async function addDepartment(e: React.FormEvent) {
+    e.preventDefault();
+    setDeptError(null);
+    setDeptBusy(true);
+    try {
+      await authed("/api/v1/admin/settings/departments", undefined, { method: "POST", body: JSON.stringify({ name: dept }) });
+      setDept("");
+      await load();
+    } catch (err) {
+      setDeptError(toUserMessage(err, "We couldn't add this department"));
+    } finally {
+      setDeptBusy(false);
+    }
+  }
+
+  async function addDesignation(e: React.FormEvent) {
+    e.preventDefault();
+    setDesigError(null);
+    setDesigBusy(true);
+    try {
+      await authed("/api/v1/admin/settings/designations", undefined, { method: "POST", body: JSON.stringify({ name: desig }) });
+      setDesig("");
+      await load();
+    } catch (err) {
+      setDesigError(toUserMessage(err, "We couldn't add this designation"));
+    } finally {
+      setDesigBusy(false);
     }
   }
 
   return (
     <AppShell title="Settings">
       <div className="grid max-w-3xl gap-6">
+        {prefsLoading && <SkeletonRows n={1} />}
+        {prefsLoadError && (
+          <Alert
+            tone="warning"
+            title={prefsLoadError.title}
+            action={{ label: "Try again", onClick: () => void loadPrefs() }}
+          >
+            {prefsLoadError.body}
+          </Alert>
+        )}
         {prefs && (
           <Card className="p-6">
             <h2 className="text-lg font-bold text-hof">Notifications</h2>
@@ -69,7 +136,7 @@ export default function SettingsPage() {
                   aria-label="In-app notifications"
                   checked={prefs.in_app_enabled}
                   onChange={(e) => setPrefs({ ...prefs, in_app_enabled: e.target.checked })}
-                  className="h-5 w-5 shrink-0 rounded border-line accent-rausch"
+                  className="h-5 w-5 shrink-0 rounded border-line accent-primary"
                 />
               </label>
               <label className="flex items-center justify-between gap-4 rounded-input bg-pearl px-4 py-3 text-sm">
@@ -82,11 +149,17 @@ export default function SettingsPage() {
                   aria-label="Email notifications"
                   checked={prefs.email_enabled}
                   onChange={(e) => setPrefs({ ...prefs, email_enabled: e.target.checked })}
-                  className="h-5 w-5 shrink-0 rounded border-line accent-rausch"
+                  className="h-5 w-5 shrink-0 rounded border-line accent-primary"
                 />
               </label>
-              {prefsNotice && <p role="status" className="text-sm font-medium text-babu">{prefsNotice}</p>}
-              {prefsError && <p role="alert" className="text-sm font-medium text-rausch-dark">{prefsError}</p>}
+              {prefsNotice && (
+                <Alert tone="success">{prefsNotice}</Alert>
+              )}
+              {prefsSaveError && (
+                <Alert tone="danger" title={prefsSaveError.title}>
+                  {prefsSaveError.body}
+                </Alert>
+              )}
               <div>
                 <Button type="submit" className="h-10 px-5 text-sm">Save notifications</Button>
               </div>
@@ -94,11 +167,21 @@ export default function SettingsPage() {
           </Card>
         )}
         {state === "loading" && <SkeletonRows n={4} />}
-        {state === "error" && (
-          <Card className="p-8 text-center">
-            <p className="font-semibold text-hof">Restricted area</p>
-            <p className="mt-1 text-sm text-foggy">{error}</p>
-          </Card>
+        {state === "error" && error && (
+          <ErrorState
+            title={error.title}
+            body={error.body}
+            actionLabel={error.actionLabel}
+            actionHref={error.action === "signin" ? "/login" : error.action === "back" ? "/dashboard" : undefined}
+            onAction={
+              error.action === "signin" || error.action === "back"
+                ? undefined
+                : () => {
+                    setState("loading");
+                    void load();
+                  }
+            }
+          />
         )}
         {state === "ready" && data && (
           <div className="grid gap-6">
@@ -109,18 +192,17 @@ export default function SettingsPage() {
                 <span key={d} className="rounded-full bg-pearl px-3 py-1.5 text-[13px] font-medium text-hof">{d}</span>
               ))}
             </div>
-            <form
-              onSubmit={async (e) => {
-                e.preventDefault();
-                await authed("/api/v1/admin/settings/departments", undefined, { method: "POST", body: JSON.stringify({ name: dept }) });
-                setDept("");
-                await load();
-              }}
-              className="mt-4 flex gap-2"
-            >
+            <form onSubmit={addDepartment} className="mt-4 flex gap-2">
               <TextInput aria-label="New department" value={dept} onChange={(e) => setDept(e.target.value)} placeholder="New department" required minLength={2} />
-              <Button type="submit" className="shrink-0">Add</Button>
+              <Button type="submit" className="shrink-0" disabled={deptBusy}>{deptBusy ? "Adding…" : "Add"}</Button>
             </form>
+            {deptError && (
+              <div className="mt-3">
+                <Alert tone="danger" title={deptError.title}>
+                  {deptError.body}
+                </Alert>
+              </div>
+            )}
           </Card>
           <Card className="p-6">
             <h2 className="text-lg font-bold text-hof">Designations</h2>
@@ -129,18 +211,17 @@ export default function SettingsPage() {
                 <span key={d} className="rounded-full bg-pearl px-3 py-1.5 text-[13px] font-medium text-hof">{d}</span>
               ))}
             </div>
-            <form
-              onSubmit={async (e) => {
-                e.preventDefault();
-                await authed("/api/v1/admin/settings/designations", undefined, { method: "POST", body: JSON.stringify({ name: desig }) });
-                setDesig("");
-                await load();
-              }}
-              className="mt-4 flex gap-2"
-            >
+            <form onSubmit={addDesignation} className="mt-4 flex gap-2">
               <TextInput aria-label="New designation" value={desig} onChange={(e) => setDesig(e.target.value)} placeholder="New designation" required minLength={2} />
-              <Button type="submit" className="shrink-0">Add</Button>
+              <Button type="submit" className="shrink-0" disabled={desigBusy}>{desigBusy ? "Adding…" : "Add"}</Button>
             </form>
+            {desigError && (
+              <div className="mt-3">
+                <Alert tone="danger" title={desigError.title}>
+                  {desigError.body}
+                </Alert>
+              </div>
+            )}
           </Card>
           <Card className="p-6">
             <h2 className="text-lg font-bold text-hof">Leave policies</h2>

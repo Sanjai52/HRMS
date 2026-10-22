@@ -1,42 +1,47 @@
 "use client";
 import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { Alert } from "../../components/feedback";
 import { Button, Card, Field, TextInput } from "../../components/ui";
+import { requestJson } from "../../lib/api";
+import { isApiError, toUserMessage } from "../../lib/errors";
 
 function ResetForm() {
   const params = useSearchParams();
-  const [token, setToken] = useState(params.get("token") ?? "");
+  // The reset token travels in the URL only; it is never rendered.
+  const token = (params.get("token") ?? "").trim();
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
-  const [error, setError] = useState("");
+  const [mismatch, setMismatch] = useState(false);
+  const [expired, setExpired] = useState(false);
+  const [error, setError] = useState<{ title: string; body: string } | null>(null);
   const [done, setDone] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  const linkExpired = expired || !token;
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    setError("");
+    setError(null);
+    setMismatch(false);
     if (password !== confirm) {
-      setError("Passwords do not match.");
+      setMismatch(true);
       return;
     }
     setBusy(true);
     try {
-      const base = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:4000";
-      const res = await fetch(`${base}/api/v1/auth/reset-password`, {
+      await requestJson("/api/v1/auth/reset-password", {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ token: token.trim(), password }),
+        body: JSON.stringify({ token, password }),
       });
-      if (res.status === 410) {
-        setError("This reset link is invalid or has expired. Request a new one.");
-        return;
-      }
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        setError(body?.error?.message ?? "Could not reset the password. Check the link and try again.");
-        return;
-      }
       setDone(true);
+    } catch (err) {
+      if (isApiError(err) && (err.status === 404 || err.status === 410 || err.kind === "expired")) {
+        setExpired(true);
+      } else {
+        const userError = toUserMessage(err, "We couldn't reset your password");
+        setError({ title: userError.title, body: userError.body });
+      }
     } finally {
       setBusy(false);
     }
@@ -45,29 +50,53 @@ function ResetForm() {
   return (
     <div className="grid min-h-dvh place-items-center bg-pearl px-4">
       <div className="w-full max-w-md">
-        <p className="mb-6 flex items-center justify-center gap-2 text-2xl font-extrabold tracking-tight text-rausch">
-          <span className="grid h-9 w-9 place-items-center rounded-lg bg-rausch text-base font-black text-white">H</span>
+        <p className="mb-6 flex items-center justify-center gap-2 text-2xl font-extrabold tracking-tight text-brand">
+          <span className="grid h-9 w-9 place-items-center rounded-lg bg-brand text-base font-black text-white">H</span>
           HRMS
         </p>
         <Card className="p-8">
           {done ? (
-            <div className="grid gap-3 text-center">
-              <h1 className="text-2xl font-extrabold tracking-tight text-hof">Password updated</h1>
-              <p className="text-[15px] leading-relaxed text-foggy">Your new password is active. Sign in to continue.</p>
-              <a href="/login" className="text-sm font-semibold text-hof underline underline-offset-4">
-                Go to login
-              </a>
+            <div className="grid gap-4">
+              <Alert tone="success" title="Password updated">
+                Your new password is active. Sign in to continue.
+              </Alert>
+              <p className="text-center text-sm text-foggy">
+                <a href="/login" className="font-semibold text-hof underline underline-offset-4">
+                  Go to sign in
+                </a>
+              </p>
+            </div>
+          ) : linkExpired ? (
+            <div className="grid gap-4">
+              <Alert
+                tone="danger"
+                title="This link has expired"
+                action={{ label: "Request a new link", href: "/forgot-password" }}
+              >
+                Ask the sender for a new link.
+              </Alert>
+              <p className="text-center text-sm text-foggy">
+                <a href="/login" className="font-semibold text-hof underline underline-offset-4">
+                  Back to sign in
+                </a>
+              </p>
             </div>
           ) : (
             <>
               <h1 className="text-2xl font-extrabold tracking-tight text-hof">Choose a new password</h1>
-              <p className="mt-1 text-[15px] text-foggy">Paste your reset token and pick a password of at least 8 characters.</p>
+              <p className="mt-1 text-[15px] text-foggy">Pick a password of at least 8 characters.</p>
               <form onSubmit={submit} className="mt-6 grid gap-4">
-                <Field label="Reset token">
-                  <TextInput value={token} onChange={(e) => setToken(e.target.value)} placeholder="From your reset email" required />
-                </Field>
-                <Field label="New password">
+                {error && (
+                  <Alert tone="danger" title={error.title}>
+                    {error.body}
+                  </Alert>
+                )}
+                <div className="rounded-control border border-line bg-surface-muted px-3 py-2.5 text-[13px] leading-relaxed text-ink-secondary">
+                  <span className="font-medium text-ink">Reset link ready.</span> Choose a new password below.
+                </div>
+                <Field label="New password" htmlFor="reset-password" hint="At least 8 characters." required>
                   <TextInput
+                    id="reset-password"
                     type="password"
                     autoComplete="new-password"
                     value={password}
@@ -76,8 +105,14 @@ function ResetForm() {
                     minLength={8}
                   />
                 </Field>
-                <Field label="Confirm password" error={error || undefined}>
+                <Field
+                  label="Confirm password"
+                  htmlFor="reset-confirm"
+                  error={mismatch ? "Passwords do not match." : undefined}
+                  required
+                >
                   <TextInput
+                    id="reset-confirm"
                     type="password"
                     autoComplete="new-password"
                     value={confirm}
@@ -86,8 +121,8 @@ function ResetForm() {
                     minLength={8}
                   />
                 </Field>
-                <Button type="submit" disabled={busy} className="mt-2 w-full disabled:opacity-60">
-                  {busy ? "Updating…" : "Update password"}
+                <Button type="submit" size="lg" loading={busy} className="mt-1 w-full">
+                  Update password
                 </Button>
               </form>
               <p className="mt-4 text-center text-sm text-foggy">
