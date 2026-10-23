@@ -1,6 +1,6 @@
 # Evaluation (measured only)
 
-Method: [00-method.md](experiments/00-method.md). Demo targets are the scripted acceptance
+Method: [00-method.md](../experiments/00-method.md). Demo targets are the scripted acceptance
 thresholds given under Workload results — project targets, not production SLOs (PRD §20.5).
 Smoke re-run on the current stack (2026-10-17, no bypass — no 429s observed): p95 9.75 ms,
 0.00% failed, 100% checks (121/121) ([smoke-r1.txt](experiments/raw/smoke-r1.txt)).

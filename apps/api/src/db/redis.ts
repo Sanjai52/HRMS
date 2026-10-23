@@ -15,6 +15,9 @@ export function redisKv(): Redis {
       // for the whole reconnect window (Scenario F, 2026-10-18).
       commandTimeout: 2000,
     });
+    client.on("error", (err) => {
+      console.warn("redis-kv unavailable:", err.message);
+    });
   }
   return client;
 }

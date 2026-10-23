@@ -2,7 +2,7 @@
 
 > **Status:** Complete (uncommitted, per instruction). This document captures the design language of **VeluraHQ** (`www.velurahq.com`) as reference material for the HRMS UI revamp.
 >
-> **Companion decision doc:** [`docs/Velura-vs-HRMS.md`](./Velura-vs-HRMS.md) — side-by-side comparison, weighted scorecard, skill application, and the recommended translation into HRMS.
+> **Companion decision doc:** [`docs/Velura-vs-HRMS.md`](Velura-vs-HRMS.md) — side-by-side comparison, weighted scorecard, skill application, and the recommended translation into HRMS.
 >
 > **Evidence sources:**
 > 1. **Source code** — the private repo cloned to `Reference/Velura` (Next.js App Router · TypeScript · Tailwind v3 + shadcn/ui "new-york" · Supabase). Extracted by five parallel read-only passes: foundations, UI primitives, marketing site, product app, effects/brand. *(Sections 3–7)_
