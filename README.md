@@ -3,12 +3,6 @@
 UCS3513 System Design Laboratory, Mini Project 6. Enterprise HR workflows on an
 explicitly sharded platform.
 
-**Status: complete and verified.** Every PRD v2.5 phase (1a–10) is implemented; the optional
-AWS phase (11) is deferred by design. The PRD §34 acceptance walk covers all 88 items with
-per-item evidence in [docs/evaluation.md](docs/evaluation.md), and the post-PRD compliance
-report — functional requirements, the eight system-design components, infrastructure and
-measured results — is [docs/report.md](docs/report.md).
-
 Documentation map: [PRD.md](PRD.md) · [docs/report.md](docs/report.md) ·
 [docs/status.md](docs/status.md) (phase tracker) · [docs/decisions.md](docs/decisions.md)
 (D-001–D-020) · [docs/evaluation.md](docs/evaluation.md) (measured results + §34 walk) ·
