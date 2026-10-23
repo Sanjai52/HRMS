@@ -4,10 +4,6 @@ Enterprise HR workflows on an explicitly sharded platform. This repository conta
 backend API, BullMQ worker, web application, candidate portal, infrastructure, tests, and
 documentation for the HRMS mini-project.
 
-**Status:** complete and verified. All PRD v2.5 phases (1a–10) are implemented. The optional
-AWS phase (11) is intentionally deferred. See [docs/operations/report.md](docs/operations/report.md)
-and [docs/operations/evaluation.md](docs/operations/evaluation.md) for implementation and measured
-results.
 
 ## Features
 
