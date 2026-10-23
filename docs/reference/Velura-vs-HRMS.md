@@ -5,9 +5,9 @@
 > **Branch / base:** `ui-tweaks` @ `6f4509b` (synced with `origin/ui-tweaks`).
 >
 > **Inputs:**
-> 1. [`docs/Velura-Design.md`](./Velura-Design.md) — 834-line extraction of VeluraHQ from source + live rendering.
-> 2. [`docs/current-design.md`](./current-design.md) — 383-line factual inventory of HRMS as-is, source + live rendering.
-> 3. [`docs/design-system.md`](./design-system.md) — HRMS's current canonical doc (37 lines, explicitly "Airbnb language").
+> 1. [`docs/Velura-Design.md`](Velura-Design.md) — 834-line extraction of VeluraHQ from source + live rendering.
+> 2. [`docs/current-design.md`](../ui/current-design.md) — 383-line factual inventory of HRMS as-is, source + live rendering.
+> 3. [`docs/design-system.md`](../architecture/design-system.md) — HRMS's current canonical doc (37 lines, explicitly "Airbnb language").
 > 4. Skills applied: `redesign-existing-projects`, `design-taste-frontend`, `high-end-visual-design`.
 >
 > **Method:** evidence-only comparison (tokens, geometry, type, component recipes, live values), then a weighted scorecard. Scores are judgments, not measurements; weights reflect an HR/payroll product, not a marketing site.

@@ -86,7 +86,7 @@ export default function NewJobPage() {
                   const origin =
                     process.env.NEXT_PUBLIC_PUBLIC_ORIGIN ??
                     process.env.NEXT_PUBLIC_API_BASE ??
-                    window.location.origin;
+                    "http://localhost:4000";
                   setShortUrl(`${origin.replace(/\/+$/, "")}/s/${short.code}`);
                   setShortLinkState("ready");
                 } catch {

@@ -1,129 +1,136 @@
 # HRMS — Scalable Human Resource Management System
 
-UCS3513 System Design Laboratory, Mini Project 6. Enterprise HR workflows on an
-explicitly sharded platform.
+Enterprise HR workflows on an explicitly sharded platform. This repository contains the
+backend API, BullMQ worker, web application, candidate portal, infrastructure, tests, and
+documentation for the HRMS mini-project.
 
-**Status: complete and verified.** Every PRD v2.5 phase (1a–10) is implemented; the optional
-AWS phase (11) is deferred by design. The PRD §34 acceptance walk covers all 88 items with
-per-item evidence in [docs/evaluation.md](docs/evaluation.md), and the post-PRD compliance
-report — functional requirements, the eight system-design components, infrastructure and
-measured results — is [docs/report.md](docs/report.md).
+**Status:** complete and verified. All PRD v2.5 phases (1a–10) are implemented. The optional
+AWS phase (11) is intentionally deferred. See [docs/operations/report.md](docs/operations/report.md)
+and [docs/operations/evaluation.md](docs/operations/evaluation.md) for implementation and measured
+results.
 
-Documentation map: [PRD.md](PRD.md) · [docs/report.md](docs/report.md) ·
-[docs/status.md](docs/status.md) (phase tracker) · [docs/decisions.md](docs/decisions.md)
-(D-001–D-020) · [docs/evaluation.md](docs/evaluation.md) (measured results + §34 walk) ·
-[docs/api/overview.md](docs/api/overview.md) (routes, RBAC, limiter scopes) ·
-[docs/shard-owned-tables.md](docs/shard-owned-tables.md) (table-ownership manifest) ·
-[docs/experiments/00-method.md](docs/experiments/00-method.md) (measurement method) ·
-[docs/design-system.md](docs/design-system.md) (UI rules).
+## Features
+
+- Employee, manager, HR, and admin workflows
+- Attendance, leave, payroll, performance, recruitment, sourcing, notifications, reports
+- Explicit employee/candidate sharding with consistent hashing and migration support
+- Redis-backed sessions, rate limiting, queues, and caching
+- Candidate portal and crawler-driven sourcing
+- Prometheus/Grafana observability stack
+- Playwright and k6-based verification assets
+
+## Tech stack
+
+- Backend: Node.js, Express, TypeScript
+- Frontend: Next.js, React, Tailwind CSS, Phosphor Icons
+- Data: PostgreSQL, Redis
+- Queue: BullMQ
+- Infrastructure: Docker Compose, NGINX
+- Testing: Vitest, k6, Playwright
+
+## Prerequisites
+
+- Node.js 22 or newer
+- Docker Desktop
+- npm (workspace-aware)
 
 ## Quick start
 
-Requirements: Node ≥ 22, Docker Desktop. All data lives in local containers; login with
-`hr@hrms.local` / `ChangeMe123!` (seeded, local-only). Ports 5438–5442 dodge the stock
-Windows Postgres on 5432.
-
 ```bash
 cp .env.example .env
-docker compose up -d                      # core set: DBs, redis, mailpit, s3, portal, nginx
-set -a && . ./.env && set +a              # export DB/redis URLs for the local scripts
-
-node infrastructure/postgres/runner.mjs   # migrations (NNN_name.sql, immutable once run)
-NODE_PATH=apps/api/node_modules node infrastructure/postgres/seed.cjs       # routing maps + HR user
-NODE_PATH=apps/api/node_modules node infrastructure/postgres/seed-demo.cjs  # demo people + data
-
-npm --workspace @hrms/api run dev         # API :4000
-npm --workspace @hrms/worker run dev      # worker + metrics :4001
-npm --workspace @hrms/web run dev         # web :3000
-```
-
-The candidate portal runs in compose (`:4100`); its crawler jobs are executed by the worker.
-`npm --workspace @hrms/candidate-portal run dev` runs it on the host instead.
-
-## Compose profiles and the load-test path (§17.3)
-
-- **Default (`docker compose up -d`)** — the core stack: `pg-catalog` + `shard-1..4`,
-  `redis-queue` (6379), `redis-kv` (6380), `s3` (moto, :5000), `mailpit` (:8025 UI, SMTP :1025),
-  `candidate-portal` (:4100), `nginx` (:8080).
-- **`docker compose --profile observability up -d`** — adds the monitoring set: exporters
-  (postgres :9101–:9105, redis :9121/:9122, cadvisor :8081), Prometheus (:9090) and
-  Grafana (:3001).
-
-| Surface | URL |
-|---|---|
-| Web app | http://localhost:3000 |
-| API (direct) | http://localhost:4000 (`/health`, `/metrics`) |
-| NGINX (all API replicas) | http://localhost:8080 |
-| Candidate portal | http://localhost:4100 |
-| Mailpit | http://localhost:8025 |
-| Prometheus | http://localhost:9090 |
-| Grafana | http://localhost:3001 (admin/admin) |
-| Worker metrics | http://localhost:4001/metrics |
-
-- **Load-test path** — k6 runs on the host against the ingress: see `tests/load/` below.
-  Compose does not embed the load generator. `smoke.js` is the sanity gate; `mixed.js`
-  (`PROFILE=low|medium|high` → 10/30/60 rps), `burst.js` (9 AM check-in burst) and
-  `ratelimit.js` produce the evaluation raws.
-
-## API replicas behind NGINX
-
-The API listens on `API_PORT` (default 4000) and echoes its port as the `x-api-instance`
-response header, so load balancing is observable.
-
-```bash
-API_PORT=4002 npm --workspace @hrms/api run dev   # replica 2
-API_PORT=4003 npm --workspace @hrms/api run dev   # replica 3
-docker compose up -d nginx                        # entry point http://localhost:8080
-for i in {1..6}; do curl -sD- -o /dev/null localhost:8080/health | grep -i x-api-instance; done
-```
-
-NGINX round-robins the three replicas (round-robin is the baseline; add a `least_conn;`
-line to the `upstream` block in `infrastructure/nginx/nginx.conf` to benchmark the
-alternative) with passive failure handling (`max_fails=2 fail_timeout=10s`): requests are
-retried on the next server and an unhealthy replica is ejected for 10 s. Prometheus scrapes
-each replica directly — `/metrics` is blocked at the ingress and restricted to internal
-peers by the API itself.
-
-`TRUST_PROXY` (default `172.16.0.0/12`, the Docker bridge subnet) is the only network
-allowed to set `X-Forwarded-For`; it accepts comma-separated IPs, CIDRs or hop counts and
-any other value fails startup. Set it in production to the actual proxy subnet so the rate
-limiter can never be spoofed by a client.
-
-## Layout
-
-- `apps/web` — Next.js App Router, Tailwind v4, design tokens (port 3000)
-- `apps/api` — Express modular monolith behind the shared `ShardRouter` (port 4000)
-- `apps/worker` — BullMQ consumers, dispatcher loop, crawler, payroll chunks (metrics :4001)
-- `apps/candidate-portal` — public candidate pages (compose :4100)
-- `packages/core` — bucket hash, consistent-hash ring, router, fenced writes, registry logic
-- `infrastructure/postgres` — versioned migrations (`NNN_name.sql`, immutable once run) + runner + seeds
-- `infrastructure/nginx`, `infrastructure/monitoring` — ingress + alert rules
-- `tests/load`, `tests/bench` — k6 scripts and Node benchmarks
-- `docs/` — PRD, decisions, design system, status tracker, evaluation, API overview, experiments
-
-## Verify
-
-```bash
-npm run ci                                   # typecheck + lint + ownership/pool guards + workspace tests
-bash scripts/check-direct-pool-access.sh     # direct shard-pool access ban (D-007)
-node scripts/check-shard-owned-tables.mjs    # migration ownership declarations (NFR-MIG-03)
+docker compose up -d
 
 set -a && . ./.env && set +a
-MAIL_LIVE=1 npm --workspace @hrms/api run test             # serial API suite (stack up)
-npm --workspace @hrms/web run build
-npm --workspace @hrms/web run e2e                          # Playwright suite
 
-k6 run -e API=http://localhost:8080 tests/load/smoke.js
-k6 run -e API=http://localhost:8080 -e PROFILE=medium tests/load/mixed.js
-k6 run -e API=http://localhost:8080 tests/load/burst.js
+node infrastructure/postgres/runner.mjs
+NODE_PATH=apps/api/node_modules node infrastructure/postgres/seed.cjs
+NODE_PATH=apps/api/node_modules node infrastructure/postgres/seed-demo.cjs
+
+npm --workspace @hrms/api run dev
+npm --workspace @hrms/worker run dev
+npm --workspace @hrms/web run dev
 ```
 
-Last verified (2026-10-19, full stack up): `npm run ci` exit 0 — typecheck 5/5
-workspaces, lint, `pool-access-ok`, `shard-owned-tables-ok (16/16)`, API **24 files / 73
-passed | 1 skipped**, core **13 files / 40 passed | 4 skipped**; Playwright e2e **14/14**;
-k6 smoke **121/121 checks, 0% failed** (3 API replicas + worker + web behind NGINX).
+The web app is available at `http://localhost:3000`, the API at `http://localhost:4000`, and
+the candidate portal at `http://localhost:4100`.
 
-Scenario evidence (queue/KV/catalog/shard outages, API kill, migrations) lives in
-`docs/experiments/raw/scenario-*.txt` and is tabulated in
-[docs/evaluation.md](docs/evaluation.md); the route-group map with RBAC and limiter scopes
-is in [docs/api/overview.md](docs/api/overview.md).
+## Observability
+
+Start the monitoring profile when needed:
+
+```bash
+docker compose --profile observability up -d
+```
+
+- Prometheus: http://localhost:9090
+- Grafana: http://localhost:3001 (`admin` / `admin`)
+
+## Demo accounts (local only)
+
+| Role | Email | Password |
+|---|---|---|
+| HR | hr@hrms.local | ChangeMe123! |
+| Manager / employee self-service | ui.manager@hrms.local | Walkthrough123! |
+| Admin | ui.admin@hrms.local | Walkthrough123! |
+| Demo manager / employee self-service | aditi.demo21@hrms.local | ManagerPass1! |
+
+Do not use these credentials outside local development.
+
+## Useful commands
+
+```bash
+npm run typecheck
+npm run lint
+npm run test --workspaces --if-present
+npm run check:pool-access
+npm run check:shard-tables
+npm run ci
+```
+
+## Documentation map
+
+- [PRD](docs/product/PRD.md)
+- [Context](docs/architecture/context.md)
+- [Architecture decisions](docs/architecture/decisions.md)
+- [Design system](docs/architecture/design-system.md)
+- [API overview](docs/api/overview.md)
+- [Shard-owned tables](docs/architecture/shard-owned-tables.md)
+- [Status tracker](docs/operations/status.md)
+- [Post-PRD report](docs/operations/report.md)
+- [Evaluation](docs/operations/evaluation.md)
+- [UI content policy](docs/ui/ui-content-policy.md)
+- [UI walkthrough](docs/ui/ui-walkthrough.md)
+- [Experiments](docs/experiments/00-method.md)
+
+## Project structure
+
+```text
+apps/
+  api/        Express API
+  web/        Next.js web application
+  worker/     BullMQ worker
+  candidate-portal/
+packages/
+  core/       Shared routing, ID, queue, and domain helpers
+docs/
+  product/    Product requirements
+  architecture/
+  operations/
+  ui/
+  reference/
+infrastructure/
+  postgres/   Migrations and seed scripts
+  nginx/      Reverse proxy configuration
+scripts/
+tests/
+```
+
+## Notes
+
+- All data lives in local Docker containers.
+- Ports 5438–5442 are used to avoid conflicts with a stock Windows Postgres installation.
+- `Reference/`, `.superpowers/`, and `.playwright-mcp/` are local-only artifacts and are not part of the committed application.
+
+## License
+
+No license has been specified for this repository yet.
